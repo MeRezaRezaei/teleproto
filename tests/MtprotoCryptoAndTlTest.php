@@ -64,4 +64,74 @@ class MtprotoCryptoAndTlTest extends TestCase
         $this->assertNotEmpty($proof['A']);
         $this->assertEquals(32, strlen($proof['M1']));
     }
+
+    public function testTLVectorAndPrimitives(): void
+    {
+        $numbers = [10, 20, 30, 40, 50];
+        $packed = TLSerializer::packVector($numbers, fn($n) => TLSerializer::packInt($n));
+
+        $offset = 0;
+        $unpacked = TLSerializer::unpackVector($packed, $offset, fn($buf, &$off) => TLSerializer::unpackInt($buf, $off));
+
+        $this->assertEquals($numbers, $unpacked);
+        $this->assertEquals(strlen($packed), $offset);
+
+        // Double
+        $d = 3.1415926535;
+        $packedD = TLSerializer::packDouble($d);
+        $offD = 0;
+        $unpackedD = TLSerializer::unpackDouble($packedD, $offD);
+        $this->assertEqualsWithDelta($d, $unpackedD, 0.00001);
+    }
+
+    public function testMTProtoPacketCodecEncryptionAndDecryption(): void
+    {
+        $authKey = random_bytes(256);
+        $sessionId = 1234567890;
+        $serverSalt = 9876543210;
+        $seqNo = 2;
+        $payload = TLSerializer::packString('MTProto 2.0 Binary Wire Packet Payload');
+
+        // Client -> Server packet
+        $packet = \MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec::encryptPacket(
+            payload: $payload,
+            authKey: $authKey,
+            sessionId: $sessionId,
+            serverSalt: $serverSalt,
+            seqNo: $seqNo,
+            toServer: true
+        );
+
+        $this->assertGreaterThan(40, strlen($packet));
+
+        $decrypted = \MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec::decryptPacket(
+            $packet,
+            $authKey,
+            fromServer: false
+        );
+
+        $this->assertEquals($sessionId, $decrypted['session_id']);
+        $this->assertEquals($serverSalt, $decrypted['server_salt']);
+        $this->assertEquals($seqNo, $decrypted['seq_no']);
+        $this->assertEquals($payload, $decrypted['payload']);
+    }
+
+    public function testMTProtoInputTypesBuilders(): void
+    {
+        $userInput = \MeRezaRezaei\Teleproto\Types\InputUser::user(12345, 'hash_abc');
+        $this->assertEquals('inputUser', $userInput['_']);
+        $this->assertEquals(12345, $userInput['user_id']);
+
+        $channelInput = \MeRezaRezaei\Teleproto\Types\InputChannel::channel(67890, 'hash_xyz');
+        $this->assertEquals('inputChannel', $channelInput['_']);
+        $this->assertEquals(67890, $channelInput['channel_id']);
+
+        $fileInput = \MeRezaRezaei\Teleproto\Types\InputFile::file(111, 4, 'photo.jpg', 'md5_sum');
+        $this->assertEquals('inputFile', $fileInput['_']);
+        $this->assertEquals(4, $fileInput['parts']);
+
+        $bigFileInput = \MeRezaRezaei\Teleproto\Types\InputFile::big(222, 100, 'video.mp4');
+        $this->assertEquals('inputFileBig', $bigFileInput['_']);
+        $this->assertEquals(100, $bigFileInput['parts']);
+    }
 }
