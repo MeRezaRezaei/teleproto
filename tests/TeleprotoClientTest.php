@@ -176,6 +176,22 @@ class TeleprotoClientTest extends TestCase
 
         $video = \MeRezaRezaei\Teleproto\Types\InputMedia::video('https://example.com/video.mp4', 'Cool Video');
         $this->assertEquals('video', $video['type']);
+
+        $replyKeyboard = \MeRezaRezaei\Teleproto\Types\ReplyKeyboard::make()
+            ->row([\MeRezaRezaei\Teleproto\Types\ReplyKeyboard::requestContact('Send My Phone')])
+            ->row(['Option 1', 'Option 2'])
+            ->resize()
+            ->oneTime();
+
+        $replyArr = $replyKeyboard->toArray();
+        $this->assertTrue($replyArr['resize_keyboard']);
+        $this->assertTrue($replyArr['one_time_keyboard']);
+        $this->assertCount(2, $replyArr['keyboard']);
+        $this->assertTrue($replyArr['keyboard'][0][0]['request_contact']);
+
+        $remove = \MeRezaRezaei\Teleproto\Types\ReplyKeyboard::remove(true);
+        $this->assertTrue($remove['remove_keyboard']);
+        $this->assertTrue($remove['selective']);
     }
 
     public function testBotClientTypedMethods(): void

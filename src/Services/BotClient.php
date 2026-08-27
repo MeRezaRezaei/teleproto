@@ -710,15 +710,17 @@ class BotClient
     }
 
     /**
-     * Helper to auto-serialize InlineKeyboard instances in options.
+     * Helper to auto-serialize InlineKeyboard and ReplyKeyboard instances in options.
      *
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
     protected function normalizeOptions(array $options): array
     {
-        if (isset($options['reply_markup']) && $options['reply_markup'] instanceof InlineKeyboard) {
-            $options['reply_markup'] = $options['reply_markup']->toArray();
+        if (isset($options['reply_markup'])) {
+            if ($options['reply_markup'] instanceof InlineKeyboard || $options['reply_markup'] instanceof \MeRezaRezaei\Teleproto\Types\ReplyKeyboard) {
+                $options['reply_markup'] = $options['reply_markup']->toArray();
+            }
         }
         return $options;
     }
