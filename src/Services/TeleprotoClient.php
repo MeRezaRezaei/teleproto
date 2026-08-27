@@ -105,7 +105,7 @@ class TeleprotoClient
     }
 
     /**
-     * Create or bind a Bot API client.
+     * Create or bind a Bot API client (over HTTP Bot API).
      *
      * @param string|null $botToken Custom runtime Bot Token (falls back to default if null)
      * @param array|null $proxyConfig Custom runtime proxy
@@ -118,5 +118,61 @@ class TeleprotoClient
         }
 
         return new BotClient($finalToken, $proxyConfig ?? $this->defaultProxyConfig);
+    }
+
+    /**
+     * Create or bind a Bot account operating directly over high-speed MTProto 2.0 (Binary TCP RPC).
+     * Uses MTProto `auth.importBotAuthorization` for bot login without Bot API HTTP latency.
+     *
+     * @param string|null $botToken Custom runtime Bot Token
+     * @param string|SessionData|null $session
+     * @param int $dcId Primary DC ID (default: 2)
+     * @param int|null $apiId
+     * @param string|null $apiHash
+     * @param array|null $proxyConfig
+     */
+    public function botMtproto(
+        ?string $botToken = null,
+        string|SessionData|null $session = null,
+        int $dcId = 2,
+        ?int $apiId = null,
+        ?string $apiHash = null,
+        ?array $proxyConfig = null
+    ): BotAccountScope {
+        $finalToken = $botToken ?? $this->defaultBotToken;
+        if (empty($finalToken)) {
+            throw new RuntimeException("Telegram Bot Token is required for MTProto bot authorization.");
+        }
+
+        $finalApiId = $apiId ?? $this->defaultApiId;
+        $finalApiHash = $apiHash ?? $this->defaultApiHash;
+        $finalProxy = $proxyConfig ?? $this->defaultProxyConfig;
+
+        if (empty($finalApiId) || empty($finalApiHash)) {
+            throw new RuntimeException("Telegram API ID and API Hash are required for MTProto connections.");
+        }
+
+        if ($session instanceof SessionData) {
+            $sessionData = $session;
+        } elseif (is_string($session) && str_contains(base64_decode($session, true) ?: '', ':')) {
+            $sessionData = SessionData::importString($session);
+        } else {
+            $sessionData = new SessionData(
+                dcId: $dcId,
+                authKey: is_string($session) ? $session : ''
+            );
+        }
+
+        $mtproto = new MTProtoClient(
+            apiId: $finalApiId,
+            apiHash: $finalApiHash,
+            session: $sessionData
+        );
+
+        if ($finalProxy) {
+            $mtproto->setProxy($finalProxy);
+        }
+
+        return new BotAccountScope($mtproto, $sessionData, $finalToken);
     }
 }

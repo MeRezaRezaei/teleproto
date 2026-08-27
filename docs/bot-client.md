@@ -63,3 +63,20 @@ $bot->call('answerCallbackQuery', [
     'show_alert'        => false
 ]);
 ```
+
+---
+
+## 4. Native High-Speed MTProto Bot Mode (`botMtproto`)
+
+You can also run your bots directly over Telegram's native binary **MTProto 2.0 TCP sockets** using `auth.importBotAuthorization`, unlocking raw MTProto RPC calls, large file uploads (up to 4GB), and zero HTTP polling latency:
+
+```php
+use MeRezaRezaei\Teleproto\Facades\TP;
+use MeRezaRezaei\Teleproto\Types\InputPeer;
+
+$botMtproto = TP::botMtproto('123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11');
+$botMtproto->login();
+
+// Send message via native MTProto 2.0
+$botMtproto->sendMessage(peer: '@mychannel', text: 'Fast Bot broadcast over MTProto binary socket!');
+```

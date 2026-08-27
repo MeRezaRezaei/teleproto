@@ -213,4 +213,28 @@ class TeleprotoClientTest extends TestCase
         $resWh = $bot->setWebhook('https://example.com/hook');
         $this->assertTrue($resWh['ok']);
     }
+
+    public function testBotMtprotoScope(): void
+    {
+        $client = new TeleprotoClient(
+            defaultApiId: 12345,
+            defaultApiHash: 'hash_abc',
+            defaultBotToken: '123456:BOT-TOKEN'
+        );
+
+        $botMtproto = $client->botMtproto(session: random_bytes(256));
+        $this->assertInstanceOf(\MeRezaRezaei\Teleproto\Services\BotAccountScope::class, $botMtproto);
+        $this->assertEquals('123456:BOT-TOKEN', $botMtproto->botToken);
+        $this->assertEquals(12345, $botMtproto->mtproto->apiId);
+
+        $loginRes = $botMtproto->login();
+        $this->assertEquals('rpc_result', $loginRes['_']);
+        $this->assertEquals('auth.importBotAuthorization', $loginRes['method']);
+        $this->assertEquals('123456:BOT-TOKEN', $loginRes['params']['bot_auth_token']);
+
+        // Send message over MTProto as Bot
+        $msgRes = $botMtproto->sendMessage(peer: '@channel', text: 'Bot message over native MTProto!');
+        $this->assertEquals('rpc_result', $msgRes['_']);
+        $this->assertEquals('messages.sendMessage', $msgRes['method']);
+    }
 }

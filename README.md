@@ -41,7 +41,7 @@ TELEGRAM_API_HASH="your_api_hash_here"
 
 Teleproto provides two standard facades: `Teleproto` and `TP`.
 
-### 1. Bot Client (Bot API)
+### 1. Bot Client (HTTP Bot API)
 
 ```php
 use MeRezaRezaei\Teleproto\Facades\TP;
@@ -63,19 +63,22 @@ $bot->sendMessage(chatId: 123456789, text: 'Choose an option:', options: [
 
 ---
 
-### 2. User MTProto 2.0 Client
+### 2. High-Speed Native MTProto 2.0 (Both Bots & Users)
+
+Run your **Bots** and **User Accounts** directly over Telegram's high-speed binary MTProto 2.0 TCP sockets for maximum throughput, large file transfers (up to 4GB), and zero HTTP webhook/polling overhead:
 
 ```php
 use MeRezaRezaei\Teleproto\Facades\TP;
 use MeRezaRezaei\Teleproto\Types\InputPeer;
 
-// Load client from stored session string
+// A. Bot operating directly over MTProto 2.0 binary socket
+$botMtproto = TP::botMtproto('123456:BOT-TOKEN');
+$botMtproto->login();
+$botMtproto->sendMessage(peer: '@channel', text: 'Lightning fast message over MTProto binary socket!');
+
+// B. User Account operating over MTProto 2.0
 $user = TP::fromSession($sessionString);
-
-// Send message over MTProto
-$user->sendMessage(peer: '@username', text: 'Hello from MTProto!');
-
-// Fetch channel information
+$user->sendMessage(peer: '@username', text: 'Hello from User MTProto!');
 $chat = $user->getFullChannel(InputPeer::channel(123456, 'access_hash'));
 ```
 
