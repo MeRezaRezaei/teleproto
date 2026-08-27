@@ -1,0 +1,43 @@
+{
+    "name": "merezarezaei/teleproto",
+    "description": "Unified Telegram Multi-Protocol Engine for PHP & Laravel (MTProto 2.0, Bot API, Mini Apps & Passport)",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "MeRezaRezaei"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/filesystem": "^10.0|^11.0|^12.0",
+        "illuminate/routing": "^10.0|^11.0|^12.0",
+        "illuminate/console": "^10.0|^11.0|^12.0",
+        "phpseclib/phpseclib": "^3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MeRezaRezaei\\Teleproto\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MeRezaRezaei\\Teleproto\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "MeRezaRezaei\\Teleproto\\TeleprotoServiceProvider"
+            ],
+            "aliases": {
+                "Teleproto": "MeRezaRezaei\\Teleproto\\Facades\\Teleproto"
+            }
+        }
+    }
+}
