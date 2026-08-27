@@ -266,8 +266,9 @@ $firstName = $decrypted['personal_details']['first_name'];
 
 ---
 
-## 📖 Documentation Guides
+## 📖 Documentation & Releases
 
+- [Changelog & Release Notes](CHANGELOG.md)
 - [User MTProto Client Guide](docs/user-client.md)
 - [Bot API Client Guide](docs/bot-client.md)
 - [Telegram Passport KYC Guide](docs/telegram-passport.md)
