@@ -19,6 +19,14 @@ use MeRezaRezaei\Teleproto\Services\UserAccountScope;
  * @method static BotClient bot(?string $botToken = null, ?array $proxyConfig = null) Connect as a Telegram Bot (via Bot API or MTProto).
  *
  * @see \MeRezaRezaei\Teleproto\Services\TeleprotoClient
+ * @see \MeRezaRezaei\Teleproto\Services\UserAccountScope
+ * @see \MeRezaRezaei\Teleproto\Services\BotClient
+ * @see \MeRezaRezaei\Teleproto\Types\InputPeer
+ * @see \MeRezaRezaei\Teleproto\Types\InlineKeyboard
+ * @see \MeRezaRezaei\Teleproto\Types\InputMedia
+ * @see \MeRezaRezaei\Teleproto\Entities\EntityParser
+ * @see \MeRezaRezaei\Teleproto\Media\StorageMedia
+ * @see \MeRezaRezaei\Teleproto\Passport\PassportDecryptor
  */
 class Teleproto extends Facade
 {

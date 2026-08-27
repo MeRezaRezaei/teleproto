@@ -150,4 +150,51 @@ class TeleprotoClientTest extends TestCase
         $this->assertTrue($sent['ok']);
         $this->assertEquals(777, $sent['result']['message_id']);
     }
+
+    public function testInlineKeyboardAndInputMediaBuilders(): void
+    {
+        $keyboard = \MeRezaRezaei\Teleproto\Types\InlineKeyboard::make()
+            ->row([
+                \MeRezaRezaei\Teleproto\Types\InlineKeyboard::urlButton('Website', 'https://example.com'),
+                \MeRezaRezaei\Teleproto\Types\InlineKeyboard::callbackButton('Click Me', 'btn_clicked'),
+            ])
+            ->row([
+                \MeRezaRezaei\Teleproto\Types\InlineKeyboard::webAppButton('Open App', 'https://app.example.com'),
+            ]);
+
+        $arr = $keyboard->toArray();
+        $this->assertCount(2, $arr['inline_keyboard']);
+        $this->assertEquals('Website', $arr['inline_keyboard'][0][0]['text']);
+        $this->assertEquals('https://example.com', $arr['inline_keyboard'][0][0]['url']);
+        $this->assertEquals('Click Me', $arr['inline_keyboard'][0][1]['text']);
+        $this->assertEquals('btn_clicked', $arr['inline_keyboard'][0][1]['callback_data']);
+
+        $photo = \MeRezaRezaei\Teleproto\Types\InputMedia::photo('https://example.com/photo.jpg', 'Cool Photo');
+        $this->assertEquals('photo', $photo['type']);
+        $this->assertEquals('https://example.com/photo.jpg', $photo['media']);
+        $this->assertEquals('Cool Photo', $photo['caption']);
+
+        $video = \MeRezaRezaei\Teleproto\Types\InputMedia::video('https://example.com/video.mp4', 'Cool Video');
+        $this->assertEquals('video', $video['type']);
+    }
+
+    public function testBotClientTypedMethods(): void
+    {
+        $httpFactory = new \Illuminate\Http\Client\Factory();
+        $httpFactory->fake([
+            'https://api.telegram.org/bot12345/sendPhoto' => $httpFactory->response(['ok' => true, 'result' => ['photo' => []]], 200),
+            'https://api.telegram.org/bot12345/answerCallbackQuery' => $httpFactory->response(['ok' => true, 'result' => true], 200),
+            'https://api.telegram.org/bot12345/setWebhook' => $httpFactory->response(['ok' => true, 'result' => true], 200),
+        ]);
+
+        $bot = new \MeRezaRezaei\Teleproto\Services\BotClient('12345', http: $httpFactory);
+        $resPhoto = $bot->sendPhoto('@channel', 'https://example.com/photo.jpg', 'Caption');
+        $this->assertTrue($resPhoto['ok']);
+
+        $resCb = $bot->answerCallbackQuery('query_123', 'Got it!', true);
+        $this->assertTrue($resCb['ok']);
+
+        $resWh = $bot->setWebhook('https://example.com/hook');
+        $this->assertTrue($resWh['ok']);
+    }
 }
