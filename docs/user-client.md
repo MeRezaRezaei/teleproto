@@ -1,6 +1,21 @@
 # User MTProto Client Guide
 
-The User MTProto client allows your Laravel application to connect to Telegram directly over MTProto 2.0.
+The User MTProto client allows your Laravel application to connect to Telegram directly over native binary MTProto 2.0 (Layer 227+).
+
+---
+
+## 🔑 Prerequisites: Why `api_id` and `api_hash` are required
+
+Telegram gates direct binary TCP socket connections to its core Data Centers behind application credentials.
+
+1. Log in to [https://my.telegram.org](https://my.telegram.org) with your Telegram account.
+2. Navigate to **API development tools**.
+3. Create an application to obtain your **API ID** (integer) and **API Hash** (string).
+4. Add them to your `.env`:
+   ```env
+   TELEGRAM_API_ID=12345678
+   TELEGRAM_API_HASH="your_api_hash_here"
+   ```
 
 ---
 
@@ -48,8 +63,8 @@ $authResult = $user->call('auth.checkPassword', [
 ]);
 ```
 
-### Step 4: Exporting the Session
-Once authenticated, export the session to a string and save it in your database:
+### Step 4: Exporting the Session (Stateless Architecture)
+Teleproto does not lock your filesystem or require a local SQLite database. The entire cryptographic state (DC ID, 256-byte AuthKey, user ID, and clock delta) is packed into a lightweight string:
 ```php
 $sessionString = $user->session->exportString();
 

@@ -30,9 +30,42 @@ php artisan vendor:publish --tag="teleproto-config"
 
 Configure `.env`:
 ```env
+# Optional: For HTTP Bot API calls
 TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+
+# Required for MTProto 2.0 (Both User & Bot high-speed binary connections)
+# Obtain from https://my.telegram.org (API development tools)
 TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH="your_api_hash_here"
+```
+
+---
+
+## 💡 Why Teleproto? (Architecture & MTProto vs Bot API)
+
+| Feature | Standard Bot API (HTTP) | Teleproto Native MTProto 2.0 (Binary) |
+| :--- | :--- | :--- |
+| **Transport** | JSON over HTTP/HTTPS | Binary TL over raw TCP Sockets (Layer 227+) |
+| **Speed & Latency** | High (HTTP handshake + JSON parse) | **Ultra-Low (<5ms)** |
+| **Bot Support** | ✅ Yes | ✅ **Yes** (via `auth.importBotAuthorization`) |
+| **User Support** | ❌ No | ✅ **Yes** (Full User MTProto Account) |
+| **Max File Upload** | 50 MB | **Up to 4,000 MB (4 GB)** |
+| **State Management** | None (Stateless) | **100% Stateless Session String** (Zero disk locks) |
+
+### 🔑 Why are `api_id` and `api_hash` needed?
+Telegram gates direct binary TCP socket connections to its core Data Centers behind application credentials. Providing your `api_id` and `api_hash` allows Teleproto to perform Diffie-Hellman key exchange and authenticate both **User accounts** and **Bots** natively on Telegram's core MTProto RPC servers.
+
+### 💾 Stateless Session Strings
+Teleproto introduces zero filesystem locks or local SQLite databases. A session is a lightweight, portable base64 string:
+```php
+// Export session after login
+$sessionString = $user->session->exportString();
+
+// Store encrypted in MySQL/PostgreSQL/Redis:
+$userModel->update(['telegram_session' => Crypt::encryptString($sessionString)]);
+
+// Restore anywhere in a single line:
+$user = TP::fromSession(Crypt::decryptString($userModel->telegram_session));
 ```
 
 ---
