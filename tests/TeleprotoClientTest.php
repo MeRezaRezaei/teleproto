@@ -334,4 +334,31 @@ class TeleprotoClientTest extends TestCase
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertEquals(['ok' => true], json_decode($response->getContent(), true));
     }
+
+    public function testUpdatePollerServiceWithCustomSinkAndFilter(): void
+    {
+        $capturedUpdates = [];
+
+        $customSink = new class($capturedUpdates) implements \MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface {
+            public function __construct(public array &$storage) {}
+            public function handle(array $update, ?string $source = null): void
+            {
+                $this->storage[] = ['source' => $source, 'update' => $update];
+            }
+        };
+
+        $poller = new \MeRezaRezaei\Teleproto\Services\UpdatePollerService($customSink);
+
+        // Filter out any update without 'message'
+        $poller->filter(fn($upd) => isset($upd['message']));
+
+        // Process message update (should pass)
+        $poller->processUpdate(['update_id' => 1, 'message' => ['text' => 'Hello']], 'bot_1');
+        // Process callback update (should be filtered out)
+        $poller->processUpdate(['update_id' => 2, 'callback_query' => ['data' => '123']], 'bot_1');
+
+        $this->assertCount(1, $capturedUpdates);
+        $this->assertEquals('bot_1', $capturedUpdates[0]['source']);
+        $this->assertEquals('Hello', $capturedUpdates[0]['update']['message']['text']);
+    }
 }

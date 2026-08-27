@@ -155,6 +155,22 @@ Event::listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $e
 php artisan teleproto:poll
 ```
 
+#### Pluggable Update Pipelines (Redis, Postgres, Spatie Data):
+`teleproto` decouples polling from dispatching via `UpdatePollerService` and `UpdateSinkInterface`. Higher-level packages can stream updates anywhere:
+```php
+use MeRezaRezaei\Teleproto\Services\UpdatePollerService;
+use MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface;
+
+class RedisStreamSink implements UpdateSinkInterface {
+    public function handle(array $update, ?string $source = null): void {
+        Redis::xadd('telegram:updates', '*', ['data' => json_encode($update)]);
+    }
+}
+
+$poller = new UpdatePollerService(new RedisStreamSink());
+$poller->pollBot(TP::bot());
+```
+
 ---
 
 ### 2. High-Speed Native MTProto 2.0 (Both Bots & Users)

@@ -5,16 +5,17 @@ declare(strict_types=1);
 namespace MeRezaRezaei\Teleproto\Console;
 
 use Illuminate\Console\Command;
-use MeRezaRezaei\Teleproto\Events\TelegramUpdateReceived;
 use MeRezaRezaei\Teleproto\Facades\TP;
-use Throwable;
+use MeRezaRezaei\Teleproto\Services\UpdatePollerService;
 
 /**
  * Long-polling runner for Telegram Bot updates in local development and queue workers.
+ * Delegates polling execution to the decoupled `UpdatePollerService`.
  */
 class PollCommand extends Command
 {
     protected $signature = 'teleproto:poll
+                            {--bot= : Custom Bot Token to poll}
                             {--timeout=30 : Long-polling timeout in seconds}
                             {--limit=100 : Maximum updates to fetch per batch}';
 
@@ -24,36 +25,29 @@ class PollCommand extends Command
     {
         $this->components->info('Starting Telegram Bot update poller (Ctrl+C to stop)...');
 
-        $offset = 0;
         $timeout = (int)$this->option('timeout');
         $limit = (int)$this->option('limit');
+        $botToken = $this->option('bot') ? (string)$this->option('bot') : null;
 
-        $bot = TP::bot();
+        $bot = TP::bot($botToken);
 
-        while (true) {
-            try {
-                $response = $bot->call('getUpdates', [
-                    'offset' => $offset,
-                    'limit' => $limit,
-                    'timeout' => $timeout,
-                ]);
+        $poller = new UpdatePollerService();
 
-                $updates = $response['result'] ?? [];
-
-                foreach ($updates as $update) {
-                    $updateId = $update['update_id'] ?? 0;
-                    $offset = max($offset, $updateId + 1);
-
-                    $this->displayUpdateSummary($update);
-
-                    // Dispatch Laravel Event
-                    TelegramUpdateReceived::dispatch($update, $bot->botToken);
-                }
-            } catch (Throwable $e) {
-                $this->components->error('Polling error: ' . $e->getMessage());
-                sleep(2);
-            }
+        // Register trap signal for clean exit on Ctrl+C if supported
+        if (function_exists('pcntl_signal')) {
+            pcntl_signal(SIGINT, function () use ($poller) {
+                $poller->stop();
+            });
         }
+
+        $poller->pollBot(
+            bot: $bot,
+            timeout: $timeout,
+            limit: $limit,
+            onUpdate: function (array $update) {
+                $this->displayUpdateSummary($update);
+            }
+        );
 
         return self::SUCCESS;
     }
