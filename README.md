@@ -1,11 +1,19 @@
-# Teleproto
+<div align="center">
 
-**Author:** MeRezaRezaei  
-**License:** MIT  
+# Teleproto ⚡
 
-A modern, unified **Telegram Multi-Protocol Engine for PHP & Laravel**.
+**Unified Telegram Multi-Protocol Engine for PHP & Laravel**
 
-Teleproto solves the fragmentation problem in PHP by giving developers a single, cohesive client that handles **MTProto 2.0 User Sessions**, **Bot API & MTProto Bots**, **Mini App Security Verification**, **Telegram Passport KYC Decryption**, and **Storage Streaming**.
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/MeRezaRezaei/teleproto/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/MeRezaRezaei/teleproto/actions)
+[![PHP Version](https://img.shields.io/badge/PHP-%3E%3D%208.2-8892BF.svg?style=flat-square)](https://php.net/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Latest Version](https://img.shields.io/packagist/v/merezarezaei/teleproto.svg?style=flat-square)](https://packagist.org/packages/merezarezaei/teleproto)
+
+</div>
+
+---
+
+**Teleproto** is a high-performance, stateless Telegram protocol engine for PHP and Laravel. It unifies **MTProto 2.0 User Sessions**, **Telegram Bot API**, **Mini App HMAC Authentication**, **Telegram Passport KYC Decryption**, and **Storage Streaming** in a single low-level library with zero bloat.
 
 ---
 
@@ -15,12 +23,12 @@ Teleproto solves the fragmentation problem in PHP by giving developers a single,
 composer require merezarezaei/teleproto
 ```
 
-Publish configuration:
+### Publish Configuration
 ```bash
 php artisan vendor:publish --tag="teleproto-config"
 ```
 
-Add your credentials to `.env`:
+Configure `.env`:
 ```env
 TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 TELEGRAM_API_ID=12345678
@@ -29,92 +37,73 @@ TELEGRAM_API_HASH="your_api_hash_here"
 
 ---
 
-## 🚀 Quick Usage
+## 🚀 Quick Start
 
-### 1. Bot Client
+Teleproto provides two standard facades: `Teleproto` and `TP`.
 
-Send messages, keyboards, and call any Telegram Bot API method:
+### 1. Bot Client (Bot API)
 
 ```php
-use MeRezaRezaei\Teleproto\Facades\Teleproto;
+use MeRezaRezaei\Teleproto\Facades\TP;
+use MeRezaRezaei\Teleproto\Types\InlineKeyboard;
 
-// Send a message via default bot
-$bot = Teleproto::bot();
-$bot->sendMessage(chatId: '@mychannel', text: 'Hello from Teleproto!');
+// Send message via default bot
+TP::bot()->sendMessage('@channel', 'Hello from Teleproto!');
 
-// Or specify a custom bot token at runtime
-$customBot = Teleproto::bot('custom_bot_token_here');
-$customBot->sendMessage(chatId: 123456789, text: 'Direct notification');
+// Dynamic bot token at runtime with Inline Keyboard
+$keyboard = InlineKeyboard::make()
+    ->row([InlineKeyboard::urlButton('Website', 'https://example.com')])
+    ->row([InlineKeyboard::callbackButton('Click Me', 'btn_clicked')]);
 
-// Call any generic Bot API method
-$me = Teleproto::bot()->call('getMe');
+$bot = TP::bot('custom_token_here');
+$bot->sendMessage(chatId: 123456789, text: 'Choose an option:', options: [
+    'reply_markup' => $keyboard
+]);
 ```
 
 ---
 
 ### 2. User MTProto 2.0 Client
 
-Connect to Telegram as a regular user account over high-speed MTProto 2.0:
-
 ```php
-use MeRezaRezaei\Teleproto\Facades\Teleproto;
+use MeRezaRezaei\Teleproto\Facades\TP;
+use MeRezaRezaei\Teleproto\Types\InputPeer;
 
-// Initialize client from an exported session string
-$user = Teleproto::fromSession($sessionString);
+// Load client from stored session string
+$user = TP::fromSession($sessionString);
 
-// Send message
+// Send message over MTProto
 $user->sendMessage(peer: '@username', text: 'Hello from MTProto!');
 
-// Call any MTProto RPC method (Layer 227+)
-$chat = $user->call('channels.getFullChannel', [
-    'channel' => ['_' => 'inputChannel', 'channel_id' => 123456, 'access_hash' => 0]
+// Fetch channel information
+$chat = $user->getFullChannel(InputPeer::channel(123456, 'access_hash'));
+```
+
+---
+
+### 3. Native Text & Markdown Entity Parsing
+
+Calculates exact UTF-16 code unit offsets with emoji and surrogate pair support:
+
+```php
+use MeRezaRezaei\Teleproto\Entities\EntityParser;
+
+// Parse HTML
+$parsedHtml = EntityParser::htmlToEntities('<b>Bold</b> <i>Italic</i> 😀 <a href="https://tg.org">Link</a>');
+
+// Parse MarkdownV2
+$parsedMd = EntityParser::markdownToEntities('*Bold* _Italic_ `Code` [Link](https://tg.org)');
+
+$user->sendMessage('@channel', $parsedHtml['text'], [
+    'entities' => $parsedHtml['entities']
 ]);
 ```
 
 ---
 
-### 3. Text Formatting (HTML & Markdown to MessageEntity)
+### 4. Telegram Mini App (TMA) Authentication
 
-Convert HTML or Markdown strings into plain text with exact `MessageEntity` offsets (with full emoji support):
-
-```php
-use MeRezaRezaei\Teleproto\Entities\EntityParser;
-
-$html = '<b>Important Notice:</b> Check <a href="https://example.com">our website</a> 😀';
-$parsed = EntityParser::htmlToEntities($html);
-
-$user->sendMessage(
-    peer: '@mychannel',
-    text: $parsed['text'],
-    options: ['entities' => $parsed['entities']]
-);
-```
-
----
-
-### 4. Streaming Media from Laravel Storage
-
-Stream large media files (up to 4GB) directly to/from Laravel Storage disks (`local`, `s3`, `minio`) with constant low RAM:
-
-```php
-use MeRezaRezaei\Teleproto\Media\StorageMedia;
-
-// Read directly from S3 in 512KB MTProto chunks
-foreach (StorageMedia::readFromDisk(path: 'videos/report.mp4', disk: 's3') as $part) {
-    $user->call('upload.saveBigFilePart', [
-        'file_id'          => $fileId,
-        'file_part'        => $part['part_index'],
-        'file_total_parts' => $part['total_parts'],
-        'bytes'            => $part['bytes'],
-    ]);
-}
-```
-
----
-
-### 5. Telegram Mini App Authentication Middleware
-
-Protect your Telegram Mini App / Web App backend routes with cryptographically verified HMAC signatures:
+Protect your Mini App backend routes with cryptographically verified HMAC signatures:
 
 ```php
 // routes/api.php
@@ -128,9 +117,26 @@ Route::middleware('tg.miniapp')->group(function () {
 
 ---
 
-### 6. Telegram Passport KYC Decryption
+### 5. Large File Streaming from Storage
 
-Decrypt end-to-end encrypted identity documents received from Telegram Passport:
+Stream up to 4GB media directly from Laravel Storage disks (`local`, `s3`, `minio`) in 512KB chunks:
+
+```php
+use MeRezaRezaei\Teleproto\Media\StorageMedia;
+
+foreach (StorageMedia::readFromDisk('media/large_video.mp4', disk: 's3') as $part) {
+    $user->call('upload.saveBigFilePart', [
+        'file_id'          => $fileId,
+        'file_part'        => $part['part_index'],
+        'file_total_parts' => $part['total_parts'],
+        'bytes'            => $part['bytes'],
+    ]);
+}
+```
+
+---
+
+### 6. Telegram Passport KYC Decryption
 
 ```php
 use MeRezaRezaei\Teleproto\Passport\PassportDecryptor;
@@ -143,19 +149,35 @@ $decrypted = PassportDecryptor::decryptCredentials(
 );
 
 $firstName = $decrypted['personal_details']['first_name'];
-$documentNo = $decrypted['passport']['document_no'] ?? null;
 ```
 
 ---
 
-## 📚 Guides
+## 📖 Documentation Guides
 
 - [User MTProto Client Guide](docs/user-client.md)
 - [Bot API Client Guide](docs/bot-client.md)
 - [Telegram Passport KYC Guide](docs/telegram-passport.md)
+- [Core Engine Design Spec](docs/superpowers/specs/2026-08-27-teleproto-core-design.md)
+
+---
+
+## 🧪 Testing
+
+```bash
+composer test
+# or
+./vendor/bin/phpunit
+```
+
+---
+
+## 🤝 Contributing
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for details.
 
 ---
 
 ## 🛡️ License
 
-Released under the **MIT License**. Copyright (c) 2026 MeRezaRezaei.
+Teleproto is open-sourced software licensed under the [MIT license](LICENSE).

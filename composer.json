@@ -50,5 +50,8 @@
                 "TP": "MeRezaRezaei\\Teleproto\\Facades\\TP"
             }
         }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit"
     }
 }

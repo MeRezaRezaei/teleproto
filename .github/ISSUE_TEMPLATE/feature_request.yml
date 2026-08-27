@@ -1,0 +1,28 @@
+name: 💡 Feature Request
+description: Propose a new feature, method mapping, or protocol improvement
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea or need a specific Telegram feature supported in Teleproto? Let us know!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: Is your feature request related to a problem or missing protocol method?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution / API Idea
+      description: Describe the solution or code syntax you would like to see.
+      placeholder: |
+        ```php
+        $user->someNewMethod(...);
+        ```
+    validations:
+      required: true
