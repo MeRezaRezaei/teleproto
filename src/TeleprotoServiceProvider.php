@@ -14,14 +14,14 @@ class TeleprotoServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__ . '/../config/teleproto.php', 'telegram');
+        $this->mergeConfigFrom(__DIR__ . '/../config/teleproto.php', 'teleproto');
 
         $this->app->singleton(TeleprotoClient::class, function ($app) {
-            $config = $app['config']['telegram'] ?? [];
+            $config = $app['config']['teleproto'] ?? $app['config']['telegram'] ?? [];
             return new TeleprotoClient(
                 defaultApiId: (int)($config['api_id'] ?? 0),
                 defaultApiHash: (string)($config['api_hash'] ?? ''),
-                defaultBotToken: $config['default_bot_token'] ?? null,
+                defaultBotToken: $config['bot_token'] ?? $config['default_bot_token'] ?? null,
                 defaultProxyConfig: $config['proxy'] ?? null
             );
         });

@@ -24,7 +24,11 @@ class VerifyMiniAppInitData
             return response()->json(['error' => 'Missing Telegram initData'], 401);
         }
 
-        $botToken = config('teleproto.default_bot_token') ?? env('TELEGRAM_BOT_TOKEN');
+        $botToken = config('teleproto.bot_token')
+            ?? config('teleproto.default_bot_token')
+            ?? config('telegram.bot_token')
+            ?? config('telegram.default_bot_token')
+            ?? env('TELEGRAM_BOT_TOKEN');
         if (!$botToken) {
             return response()->json(['error' => 'Bot token not configured on server'], 500);
         }

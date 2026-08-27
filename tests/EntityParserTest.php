@@ -61,4 +61,39 @@ class EntityParserTest extends TestCase
         $this->assertEquals(6, $result['entities'][0]['offset']);
         $this->assertEquals(8, $result['entities'][0]['length']);
     }
+
+    public function testMarkdownToEntitiesFormatting(): void
+    {
+        $markdown = '*Hello* _World_ `code` ~strike~ ||spoiler|| [Telegram](https://telegram.org)';
+        $result = EntityParser::markdownToEntities($markdown);
+
+        $this->assertEquals('Hello World code strike spoiler Telegram', $result['text']);
+        $this->assertCount(6, $result['entities']);
+
+        $this->assertEquals('messageEntityBold', $result['entities'][0]['_']);
+        $this->assertEquals(0, $result['entities'][0]['offset']);
+        $this->assertEquals(5, $result['entities'][0]['length']);
+
+        $this->assertEquals('messageEntityItalic', $result['entities'][1]['_']);
+        $this->assertEquals('messageEntityCode', $result['entities'][2]['_']);
+        $this->assertEquals('messageEntityStrike', $result['entities'][3]['_']);
+        $this->assertEquals('messageEntitySpoiler', $result['entities'][4]['_']);
+        $this->assertEquals('messageEntityTextUrl', $result['entities'][5]['_']);
+        $this->assertEquals('https://telegram.org', $result['entities'][5]['url']);
+    }
+
+    public function testMarkdownEscapedCharactersAndPreBlocks(): void
+    {
+        $markdown = "Notice: \*not bold\* and [link](https://tg.org)\n```php\n\$var = 1;\n```";
+        $result = EntityParser::markdownToEntities($markdown);
+
+        $this->assertEquals("Notice: *not bold* and link\n\$var = 1;\n", $result['text']);
+        $this->assertCount(2, $result['entities']);
+
+        $this->assertEquals('messageEntityTextUrl', $result['entities'][0]['_']);
+        $this->assertEquals('https://tg.org', $result['entities'][0]['url']);
+
+        $this->assertEquals('messageEntityPre', $result['entities'][1]['_']);
+        $this->assertEquals('php', $result['entities'][1]['language']);
+    }
 }

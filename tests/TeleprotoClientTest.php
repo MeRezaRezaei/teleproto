@@ -118,4 +118,36 @@ class TeleprotoClientTest extends TestCase
         $this->expectExceptionCode(401);
         $customBot->sendMessage('@chat', 'Bot announcement');
     }
+
+    public function testBotClientWithHttpFake(): void
+    {
+        $httpFactory = new \Illuminate\Http\Client\Factory();
+        $httpFactory->fake([
+            'https://api.telegram.org/bot12345/getMe' => $httpFactory->response([
+                'ok' => true,
+                'result' => [
+                    'id' => 12345,
+                    'is_bot' => true,
+                    'first_name' => 'MockBot',
+                    'username' => 'mock_bot',
+                ]
+            ], 200),
+            'https://api.telegram.org/bot12345/sendMessage' => $httpFactory->response([
+                'ok' => true,
+                'result' => [
+                    'message_id' => 777,
+                    'text' => 'Hello Mock',
+                ]
+            ], 200)
+        ]);
+
+        $bot = new \MeRezaRezaei\Teleproto\Services\BotClient('12345', http: $httpFactory);
+        $me = $bot->call('getMe');
+        $this->assertTrue($me['ok']);
+        $this->assertEquals('MockBot', $me['result']['first_name']);
+
+        $sent = $bot->sendMessage('@test', 'Hello Mock');
+        $this->assertTrue($sent['ok']);
+        $this->assertEquals(777, $sent['result']['message_id']);
+    }
 }

@@ -7,14 +7,14 @@ The Bot API client provides simple, clean methods to interact with Telegram Bots
 ## 1. Basic Usage
 
 ```php
-use MeRezaRezaei\Teleproto\Facades\Telegram;
+use MeRezaRezaei\Teleproto\Facades\Teleproto;
 
 // Send message via default bot (TELEGRAM_BOT_TOKEN from .env)
-$bot = Telegram::bot();
+$bot = Teleproto::bot();
 $bot->sendMessage(chatId: '@mychannel', text: 'Hello Channel Subscribers!');
 
 // Send message via dynamic bot token
-$customBot = Telegram::bot('123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11');
+$customBot = Teleproto::bot('123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11');
 $customBot->sendMessage(chatId: 987654321, text: 'Direct notification');
 ```
 

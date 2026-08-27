@@ -58,7 +58,7 @@ class PasswordCalculator
 
         // S = (B - k * gx)^(a + u * x) mod p
         $kgx = $k->multiply($gx);
-        $diff = $srpB->subtract($kgx)->remainder($p);
+        $diff = $srpB->subtract($kgx)->divide($p)[1];
         if ($diff->compare(new BigInteger(0)) < 0) {
             $diff = $diff->add($p);
         }

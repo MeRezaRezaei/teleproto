@@ -40,4 +40,28 @@ class MtprotoCryptoAndTlTest extends TestCase
             $this->assertEquals(strlen($packed), $offset);
         }
     }
+
+    public function testPasswordCalculatorSrpProof(): void
+    {
+        $accountPassword = [
+            'has_password' => true,
+            'current_algo' => [
+                'g' => 3,
+                'p' => str_repeat("\xFF", 255) . "\xED",
+                'salt1' => 'salt1_test_bytes',
+                'salt2' => 'salt2_test_bytes',
+            ],
+            'srp_B' => str_repeat("\xBB", 256),
+            'srp_id' => 123456789,
+        ];
+
+        $proof = \MeRezaRezaei\Teleproto\MTProto\Crypto\PasswordCalculator::computeSrpProof(
+            $accountPassword,
+            'my_secure_cloud_password'
+        );
+
+        $this->assertEquals(123456789, $proof['srp_id']);
+        $this->assertNotEmpty($proof['A']);
+        $this->assertEquals(32, strlen($proof['M1']));
+    }
 }

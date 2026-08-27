@@ -50,7 +50,8 @@ class EntityParser
     }
 
     /**
-     * Converts Telegram MarkdownV2 to plain text and MessageEntity structures.
+     * Converts Telegram Markdown / MarkdownV2 to plain text and MessageEntity structures using a deterministic token stream scanner.
+     * Handles escaping, nesting, UTF-16 code units, pre blocks, custom emojis, and inline links without regex.
      *
      * @return array{text: string, entities: list<array<string, mixed>>}
      */
@@ -60,39 +61,258 @@ class EntityParser
             return ['text' => '', 'entities' => []];
         }
 
-        // MarkdownV2 patterns
-        $patterns = [
-            '/\*(.*?)\*/s' => 'messageEntityBold',
-            '/_(.*?)_/s'   => 'messageEntityItalic',
-            '/~(.*?)~/s'   => 'messageEntityStrike',
-            '/\|\|(.*?)\|\|/s' => 'messageEntitySpoiler',
-            '/`(.*?)`/s'   => 'messageEntityCode',
-        ];
-
+        $chars = mb_str_split($markdown);
+        $len = count($chars);
         $plainText = '';
-        $entities = [];
         $utf16Offset = 0;
+        $entities = [];
+        $stack = [];
 
-        // Parse links: [text](url)
-        $textWithPlaceholders = preg_replace_callback('/\[(.*?)\]\((.*?)\)/s', function ($matches) use (&$entities, &$utf16Offset, &$plainText) {
-            $linkText = $matches[1];
-            $url = $matches[2];
-            $len = self::getUtf16Length($linkText);
+        $i = 0;
+        while ($i < $len) {
+            $c = $chars[$i];
 
-            $entities[] = [
-                '_' => 'messageEntityTextUrl',
-                'offset' => $utf16Offset,
-                'length' => $len,
-                'url' => $url,
-            ];
+            // 1. Escaped character (\x)
+            if ($c === '\\' && $i + 1 < $len) {
+                $nextChar = $chars[++$i];
+                $plainText .= $nextChar;
+                $utf16Offset += self::getUtf16Length($nextChar);
+                $i++;
+                continue;
+            }
 
-            $utf16Offset += $len;
-            $plainText .= $linkText;
-            return $linkText;
-        }, $markdown);
+            // 2. Pre-formatted code block (```)
+            if ($c === '`' && $i + 2 < $len && $chars[$i + 1] === '`' && $chars[$i + 2] === '`') {
+                $i += 3;
+                $lang = '';
+                $closePos = null;
+                for ($j = $i; $j + 2 < $len; $j++) {
+                    if ($chars[$j] === '`' && $chars[$j + 1] === '`' && $chars[$j + 2] === '`') {
+                        $closePos = $j;
+                        break;
+                    }
+                }
+                if ($closePos !== null) {
+                    $blockContent = implode('', array_slice($chars, $i, $closePos - $i));
+                    if (str_contains($blockContent, "\n")) {
+                        $firstLine = strstr($blockContent, "\n", true);
+                        if ($firstLine !== false && preg_match('/^[a-zA-Z0-9_-]+$/', $firstLine)) {
+                            $lang = $firstLine;
+                            $blockContent = substr($blockContent, strlen($firstLine) + 1);
+                        }
+                    }
+                    $startOffset = $utf16Offset;
+                    $plainText .= $blockContent;
+                    $blockLen = self::getUtf16Length($blockContent);
+                    $utf16Offset += $blockLen;
+                    $entity = [
+                        '_' => 'messageEntityPre',
+                        'offset' => $startOffset,
+                        'length' => $blockLen,
+                    ];
+                    if ($lang !== '') {
+                        $entity['language'] = $lang;
+                    }
+                    $entities[] = $entity;
+                    $i = $closePos + 3;
+                    continue;
+                }
+            }
 
-        // Standard HTML fallback for mixed entities
-        return self::htmlToEntities($textWithPlaceholders ?? $markdown);
+            // 3. Inline fixed-width code (`)
+            if ($c === '`') {
+                $closePos = null;
+                for ($j = $i + 1; $j < $len; $j++) {
+                    if ($chars[$j] === '`') {
+                        $closePos = $j;
+                        break;
+                    }
+                }
+                if ($closePos !== null) {
+                    $codeContent = implode('', array_slice($chars, $i + 1, $closePos - ($i + 1)));
+                    $startOffset = $utf16Offset;
+                    $plainText .= $codeContent;
+                    $codeLen = self::getUtf16Length($codeContent);
+                    $utf16Offset += $codeLen;
+                    $entities[] = [
+                        '_' => 'messageEntityCode',
+                        'offset' => $startOffset,
+                        'length' => $codeLen,
+                    ];
+                    $i = $closePos + 1;
+                    continue;
+                }
+            }
+
+            // 4. Custom emoji (![alt](tg://emoji?id=123))
+            if ($c === '!' && $i + 1 < $len && $chars[$i + 1] === '[') {
+                $closeBracket = null;
+                for ($j = $i + 2; $j < $len; $j++) {
+                    if ($chars[$j] === ']') {
+                        $closeBracket = $j;
+                        break;
+                    }
+                }
+                if ($closeBracket !== null && $closeBracket + 1 < $len && $chars[$closeBracket + 1] === '(') {
+                    $closeParen = null;
+                    for ($k = $closeBracket + 2; $k < $len; $k++) {
+                        if ($chars[$k] === ')') {
+                            $closeParen = $k;
+                            break;
+                        }
+                    }
+                    if ($closeParen !== null) {
+                        $altText = implode('', array_slice($chars, $i + 2, $closeBracket - ($i + 2)));
+                        $url = implode('', array_slice($chars, $closeBracket + 2, $closeParen - ($closeBracket + 2)));
+                        if (str_starts_with($url, 'tg://emoji?id=')) {
+                            $emojiId = substr($url, 14);
+                            $startOffset = $utf16Offset;
+                            $plainText .= $altText;
+                            $altLen = self::getUtf16Length($altText);
+                            $utf16Offset += $altLen;
+                            $entities[] = [
+                                '_' => 'messageEntityCustomEmoji',
+                                'offset' => $startOffset,
+                                'length' => $altLen,
+                                'document_id' => (int)$emojiId,
+                            ];
+                            $i = $closeParen + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // 5. Inline links ([text](url))
+            if ($c === '[') {
+                $closeBracket = null;
+                for ($j = $i + 1; $j < $len; $j++) {
+                    if ($chars[$j] === '\\') {
+                        $j++;
+                        continue;
+                    }
+                    if ($chars[$j] === ']') {
+                        $closeBracket = $j;
+                        break;
+                    }
+                }
+                if ($closeBracket !== null && $closeBracket + 1 < $len && $chars[$closeBracket + 1] === '(') {
+                    $closeParen = null;
+                    for ($k = $closeBracket + 2; $k < $len; $k++) {
+                        if ($chars[$k] === '\\') {
+                            $k++;
+                            continue;
+                        }
+                        if ($chars[$k] === ')') {
+                            $closeParen = $k;
+                            break;
+                        }
+                    }
+                    if ($closeParen !== null) {
+                        $linkText = implode('', array_slice($chars, $i + 1, $closeBracket - ($i + 1)));
+                        $url = implode('', array_slice($chars, $closeBracket + 2, $closeParen - ($closeBracket + 2)));
+                        $startOffset = $utf16Offset;
+                        $plainText .= $linkText;
+                        $linkLen = self::getUtf16Length($linkText);
+                        $utf16Offset += $linkLen;
+                        $entities[] = [
+                            '_' => 'messageEntityTextUrl',
+                            'offset' => $startOffset,
+                            'length' => $linkLen,
+                            'url' => $url,
+                        ];
+                        $i = $closeParen + 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 6. Two-char delimiters: || (spoiler), __ (underline), ** (bold)
+            $twoChar = ($i + 1 < $len) ? ($c . $chars[$i + 1]) : '';
+            if ($twoChar === '||' || $twoChar === '__' || $twoChar === '**') {
+                $type = match ($twoChar) {
+                    '||' => 'messageEntitySpoiler',
+                    '__' => 'messageEntityUnderline',
+                    '**' => 'messageEntityBold',
+                };
+                $matchedIdx = null;
+                for ($k = count($stack) - 1; $k >= 0; $k--) {
+                    if ($stack[$k]['delim'] === $twoChar) {
+                        $matchedIdx = $k;
+                        break;
+                    }
+                }
+                if ($matchedIdx !== null) {
+                    $entry = $stack[$matchedIdx];
+                    array_splice($stack, $matchedIdx, 1);
+                    $lenUnits = $utf16Offset - $entry['start_offset'];
+                    if ($lenUnits > 0) {
+                        $entities[] = [
+                            '_' => $entry['type'],
+                            'offset' => $entry['start_offset'],
+                            'length' => $lenUnits,
+                        ];
+                    }
+                } else {
+                    $stack[] = [
+                        'delim' => $twoChar,
+                        'type' => $type,
+                        'start_offset' => $utf16Offset,
+                    ];
+                }
+                $i += 2;
+                continue;
+            }
+
+            // 7. Single-char delimiters: *, _, ~
+            if ($c === '*' || $c === '_' || $c === '~') {
+                $type = match ($c) {
+                    '*' => 'messageEntityBold',
+                    '_' => 'messageEntityItalic',
+                    '~' => 'messageEntityStrike',
+                };
+                $matchedIdx = null;
+                for ($k = count($stack) - 1; $k >= 0; $k--) {
+                    if ($stack[$k]['delim'] === $c) {
+                        $matchedIdx = $k;
+                        break;
+                    }
+                }
+                if ($matchedIdx !== null) {
+                    $entry = $stack[$matchedIdx];
+                    array_splice($stack, $matchedIdx, 1);
+                    $lenUnits = $utf16Offset - $entry['start_offset'];
+                    if ($lenUnits > 0) {
+                        $entities[] = [
+                            '_' => $entry['type'],
+                            'offset' => $entry['start_offset'],
+                            'length' => $lenUnits,
+                        ];
+                    }
+                } else {
+                    $stack[] = [
+                        'delim' => $c,
+                        'type' => $type,
+                        'start_offset' => $utf16Offset,
+                    ];
+                }
+                $i++;
+                continue;
+            }
+
+            // 8. Plain text character
+            $plainText .= $c;
+            $utf16Offset += self::getUtf16Length($c);
+            $i++;
+        }
+
+        // Sort entities by start offset
+        usort($entities, fn($a, $b) => $a['offset'] <=> $b['offset']);
+
+        return [
+            'text' => $plainText,
+            'entities' => $entities,
+        ];
     }
 
     protected static function traverseDomNode(DOMNode $node, string &$plainText, int &$utf16Offset, array &$entities): void

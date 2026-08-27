@@ -8,10 +8,10 @@ The User MTProto client allows your Laravel application to connect to Telegram d
 
 ### Step 1: Initialize User Login
 ```php
-use MeRezaRezaei\Teleproto\Facades\Telegram;
+use MeRezaRezaei\Teleproto\Facades\Teleproto;
 
 // Initialize client with user's API credentials (or fallback to .env)
-$user = Telegram::user(
+$user = Teleproto::user(
     accountId: 123456789,
     apiId: 123456,
     apiHash: 'your_api_hash'
@@ -64,10 +64,10 @@ $userModel->update([
 ## 2. Making Calls from Stored Session
 
 ```php
-use MeRezaRezaei\Teleproto\Facades\Telegram;
+use MeRezaRezaei\Teleproto\Facades\Teleproto;
 
 // Load and initialize client from stored session string
-$user = Telegram::fromSession(
+$user = Teleproto::fromSession(
     sessionString: Crypt::decryptString($userModel->telegram_session),
     apiId: $userModel->api_id,
     apiHash: $userModel->api_hash
