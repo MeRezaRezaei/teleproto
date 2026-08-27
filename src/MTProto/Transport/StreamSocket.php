@@ -20,6 +20,7 @@ class StreamSocket
      * @param array{type?: string, host?: string, port?: int, username?: string, password?: string}|null $proxy
      * @param float $timeout Timeout in seconds
      * @return resource Writable stream socket
+     * @todo proxy tunneling is not implemented yet; connection is direct
      */
     public static function createConnection(
         string $host,
@@ -36,13 +37,6 @@ class StreamSocket
                 'verify_peer_name' => false,
             ],
         ];
-
-        if (!empty($proxy['host']) && !empty($proxy['port'])) {
-            $proxyType = strtolower($proxy['type'] ?? 'tcp');
-            $proxyUrl = "tcp://{$proxy['host']}:{$proxy['port']}";
-            $options['http']['proxy'] = $proxyUrl;
-            $options['http']['request_fulluri'] = true;
-        }
 
         $context = stream_context_create($options);
         $remoteSocket = "tcp://{$host}:{$port}";
@@ -63,5 +57,36 @@ class StreamSocket
         stream_set_timeout($socket, (int)$timeout);
 
         return $socket;
+    }
+
+    public static function write($socket, string $bytes): void
+    {
+        $total = strlen($bytes);
+        $written = 0;
+        while ($written < $total) {
+            $n = @fwrite($socket, substr($bytes, $written));
+            if ($n === false || $n === 0) {
+                throw new \RuntimeException('StreamSocket: write failed at offset ' . $written);
+            }
+            $written += $n;
+        }
+    }
+
+    public static function read($socket, int $length): string
+    {
+        $chunk = @fread($socket, $length);
+        if ($chunk === false || $chunk === '') {
+            throw new \RuntimeException('StreamSocket: EOF while reading');
+        }
+        return $chunk;
+    }
+
+    public static function readExact($socket, int $length): string
+    {
+        $buffer = '';
+        while (strlen($buffer) < $length) {
+            $buffer .= self::read($socket, $length - strlen($buffer));
+        }
+        return $buffer;
     }
 }
