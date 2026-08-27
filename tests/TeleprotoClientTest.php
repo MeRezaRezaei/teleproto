@@ -304,4 +304,34 @@ class TeleprotoClientTest extends TestCase
         $this->assertEquals('Alice', $resProfile['params']['first_name']);
         $this->assertEquals('Developer', $resProfile['params']['about']);
     }
+
+    public function testTelegramUpdateReceivedEvent(): void
+    {
+        $rawUpdate = [
+            'update_id' => 889900,
+            'message' => [
+                'message_id' => 1234,
+                'from' => ['id' => 555, 'first_name' => 'Bob'],
+                'text' => '/start',
+            ],
+        ];
+
+        $event = new \MeRezaRezaei\Teleproto\Events\TelegramUpdateReceived($rawUpdate, '123456:BOT');
+        $this->assertEquals(889900, $event->getUpdateId());
+        $this->assertEquals('/start', $event->getMessage()['text']);
+        $this->assertEquals(1234, $event->getMessage()['message_id']);
+        $this->assertNull($event->getCallbackQuery());
+    }
+
+    public function testTelegramWebhookControllerResponse(): void
+    {
+        $controller = new \MeRezaRezaei\Teleproto\Http\Controllers\TelegramWebhookController();
+        $req = \Illuminate\Http\Request::create('/telegram/webhook', 'POST', [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+        ], json_encode(['update_id' => 101, 'message' => ['text' => 'Hi']]));
+
+        $response = $controller($req);
+        $this->assertEquals(200, $response->getStatusCode());
+        $this->assertEquals(['ok' => true], json_decode($response->getContent(), true));
+    }
 }

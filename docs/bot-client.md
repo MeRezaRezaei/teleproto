@@ -66,7 +66,40 @@ $bot->call('answerCallbackQuery', [
 
 ---
 
-## 4. Native High-Speed MTProto Bot Mode (`botMtproto`)
+## 4. Handling Inbound Updates (Webhooks & Long Polling)
+
+Teleproto provides a zero-boilerplate way to receive and process updates:
+
+### Option A: Webhook in `routes/api.php`
+```php
+use Illuminate\Support\Facades\Route;
+
+// 1. Registers POST /api/telegram/webhook with secret token security
+Route::telegramWebhook('telegram/webhook');
+```
+
+### Option B: Local Polling (No HTTPS/ngrok required)
+```bash
+php artisan teleproto:poll
+```
+
+### Listening to Updates Anywhere in Laravel:
+```php
+use Illuminate\Support\Facades\Event;
+use MeRezaRezaei\Teleproto\Events\TelegramUpdateReceived;
+use MeRezaRezaei\Teleproto\Facades\TP;
+
+Event::listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $event) {
+    $msg = $event->getMessage();
+    if ($msg && ($msg['text'] ?? '') === '/start') {
+        TP::bot($event->botToken)->sendMessage($msg['chat']['id'], 'Hello! Bot is live on Teleproto.');
+    }
+});
+```
+
+---
+
+## 5. Native High-Speed MTProto Bot Mode (`botMtproto`)
 
 You can also run your bots directly over Telegram's native binary **MTProto 2.0 TCP sockets** using `auth.importBotAuthorization`, unlocking raw MTProto RPC calls, large file uploads (up to 4GB), and zero HTTP polling latency:
 

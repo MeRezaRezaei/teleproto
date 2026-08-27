@@ -41,6 +41,7 @@ class TeleprotoServiceProvider extends ServiceProvider
 
             $this->commands([
                 \MeRezaRezaei\Teleproto\Console\LoginCommand::class,
+                \MeRezaRezaei\Teleproto\Console\PollCommand::class,
             ]);
         }
 
@@ -48,6 +49,11 @@ class TeleprotoServiceProvider extends ServiceProvider
             /** @var Router $router */
             $router = $this->app['router'];
             $router->aliasMiddleware('tg.miniapp', VerifyMiniAppInitData::class);
+
+            // Register Route Macro for simple Webhook endpoint declaration
+            $router->macro('telegramWebhook', function (string $uri = 'telegram/webhook') use ($router) {
+                return $router->post($uri, \MeRezaRezaei\Teleproto\Http\Controllers\TelegramWebhookController::class);
+            });
         }
     }
 }

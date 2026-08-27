@@ -113,7 +113,7 @@ $user = TP::fromSession(Crypt::decryptString($userModel->telegram_session));
 
 Teleproto provides two standard facades: `Teleproto` and `TP`.
 
-### 1. Bot Client (HTTP Bot API)
+### 1. Bot Client (HTTP Bot API & Webhook Macro)
 
 ```php
 use MeRezaRezaei\Teleproto\Facades\TP;
@@ -131,6 +131,28 @@ $bot = TP::bot('custom_token_here');
 $bot->sendMessage(chatId: 123456789, text: 'Choose an option:', options: [
     'reply_markup' => $keyboard
 ]);
+```
+
+#### Ingesting Webhooks in 1 Line:
+Declare the webhook route in `routes/api.php`:
+```php
+// routes/api.php
+Route::telegramWebhook('telegram/webhook');
+```
+Listen to incoming updates anywhere in your app:
+```php
+// app/Providers/EventServiceProvider.php or Event::listen
+Event::listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $event) {
+    $message = $event->getMessage();
+    if ($message && ($message['text'] ?? '') === '/start') {
+        TP::bot($event->botToken)->sendMessage($message['chat']['id'], 'Welcome!');
+    }
+});
+```
+
+#### Local Development Polling (No ngrok needed):
+```bash
+php artisan teleproto:poll
 ```
 
 ---
