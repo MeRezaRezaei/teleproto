@@ -22,7 +22,10 @@ class TeleprotoServiceProvider extends ServiceProvider
                 defaultApiId: (int)($config['api_id'] ?? 0),
                 defaultApiHash: (string)($config['api_hash'] ?? ''),
                 defaultBotToken: $config['bot_token'] ?? $config['default_bot_token'] ?? null,
-                defaultProxyConfig: $config['proxy'] ?? null
+                defaultProxyConfig: $config['proxy'] ?? null,
+                defaultUserSession: $config['user_session'] ?? null,
+                defaultBotSession: $config['bot_session'] ?? null,
+                defaultDcId: (int)($config['dc_id'] ?? 2)
             );
         });
 
@@ -35,6 +38,10 @@ class TeleprotoServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../config/teleproto.php' => config_path('teleproto.php'),
             ], 'teleproto-config');
+
+            $this->commands([
+                \MeRezaRezaei\Teleproto\Console\LoginCommand::class,
+            ]);
         }
 
         if (isset($this->app['router'])) {

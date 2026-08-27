@@ -237,4 +237,37 @@ class TeleprotoClientTest extends TestCase
         $this->assertEquals('rpc_result', $msgRes['_']);
         $this->assertEquals('messages.sendMessage', $msgRes['method']);
     }
+
+    public function testDefaultUserAndBotSessionFallback(): void
+    {
+        $dummyUserSession = (new SessionData(dcId: 2, authKey: random_bytes(256), userId: 112233))->exportString();
+        $dummyBotSession = (new SessionData(dcId: 4, authKey: random_bytes(256), userId: 445566))->exportString();
+
+        $client = new TeleprotoClient(
+            defaultApiId: 9999,
+            defaultApiHash: 'hash9999',
+            defaultBotToken: '123456:BOT-DEFAULT',
+            defaultUserSession: $dummyUserSession,
+            defaultBotSession: $dummyBotSession
+        );
+
+        // Calling user() without session should automatically hydrate from defaultUserSession
+        $userScope = $client->user();
+        $this->assertEquals(112233, $userScope->session->userId);
+        $this->assertEquals(2, $userScope->session->dcId);
+
+        // Calling botMtproto() without session should automatically hydrate from defaultBotSession
+        $botScope = $client->botMtproto();
+        $this->assertEquals(445566, $botScope->session->userId);
+        $this->assertEquals(4, $botScope->session->dcId);
+    }
+
+    public function testTerminalQrRendering(): void
+    {
+        $url = 'tg://login?token=dGVzdF9sb2dpbl90b2tlbl8xMjM0NTY3ODkw';
+        $qrString = \MeRezaRezaei\Teleproto\Support\TerminalQr::render($url);
+
+        $this->assertNotEmpty($qrString);
+        $this->assertStringContainsString('█', $qrString);
+    }
 }

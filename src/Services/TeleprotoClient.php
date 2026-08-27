@@ -18,15 +18,19 @@ class TeleprotoClient
         public int $defaultApiId = 0,
         public string $defaultApiHash = '',
         public ?string $defaultBotToken = null,
-        public ?array $defaultProxyConfig = null
+        public ?array $defaultProxyConfig = null,
+        public ?string $defaultUserSession = null,
+        public ?string $defaultBotSession = null,
+        public int $defaultDcId = 2
     ) {}
 
     /**
      * Create or bind an MTProto user account session.
+     * If no session is provided, falls back to the configured default user session from .env.
      *
      * @param int|null $accountId Telegram user ID (optional if session contains it)
      * @param string|SessionData|null $session SessionData object, exported base64 string, or raw AuthKey
-     * @param int $dcId Primary DC ID (default: 2)
+     * @param int|null $dcId Primary DC ID (default: configured defaultDcId or 2)
      * @param int|null $apiId Custom runtime API ID (falls back to default if null)
      * @param string|null $apiHash Custom runtime API Hash (falls back to default if null)
      * @param array|null $proxyConfig Custom runtime proxy config (falls back to default if null)
@@ -34,7 +38,7 @@ class TeleprotoClient
     public function user(
         ?int $accountId = null,
         string|SessionData|null $session = null,
-        int $dcId = 2,
+        ?int $dcId = null,
         ?int $apiId = null,
         ?string $apiHash = null,
         ?array $proxyConfig = null
@@ -42,19 +46,21 @@ class TeleprotoClient
         $finalApiId = $apiId ?? $this->defaultApiId;
         $finalApiHash = $apiHash ?? $this->defaultApiHash;
         $finalProxy = $proxyConfig ?? $this->defaultProxyConfig;
+        $finalDcId = $dcId ?? $this->defaultDcId;
+        $targetSession = $session ?? $this->defaultUserSession;
 
         if (empty($finalApiId) || empty($finalApiHash)) {
             throw new RuntimeException("Telegram API ID and API Hash are required. Pass them to user() or configure defaults in config/teleproto.php.");
         }
 
-        if ($session instanceof SessionData) {
-            $sessionData = $session;
-        } elseif (is_string($session) && str_contains(base64_decode($session, true) ?: '', ':')) {
-            $sessionData = SessionData::importString($session);
+        if ($targetSession instanceof SessionData) {
+            $sessionData = $targetSession;
+        } elseif (is_string($targetSession) && str_contains(base64_decode($targetSession, true) ?: '', ':')) {
+            $sessionData = SessionData::importString($targetSession);
         } else {
             $sessionData = new SessionData(
-                dcId: $dcId,
-                authKey: is_string($session) ? $session : '',
+                dcId: $finalDcId,
+                authKey: is_string($targetSession) ? $targetSession : '',
                 userId: $accountId
             );
         }
@@ -78,7 +84,7 @@ class TeleprotoClient
     public function forAccount(
         ?int $accountId = null,
         string|SessionData|null $session = null,
-        int $dcId = 2,
+        ?int $dcId = null,
         ?int $apiId = null,
         ?string $apiHash = null,
         ?array $proxyConfig = null
@@ -126,7 +132,7 @@ class TeleprotoClient
      *
      * @param string|null $botToken Custom runtime Bot Token
      * @param string|SessionData|null $session
-     * @param int $dcId Primary DC ID (default: 2)
+     * @param int|null $dcId Primary DC ID (default: 2)
      * @param int|null $apiId
      * @param string|null $apiHash
      * @param array|null $proxyConfig
@@ -134,7 +140,7 @@ class TeleprotoClient
     public function botMtproto(
         ?string $botToken = null,
         string|SessionData|null $session = null,
-        int $dcId = 2,
+        ?int $dcId = null,
         ?int $apiId = null,
         ?string $apiHash = null,
         ?array $proxyConfig = null
@@ -147,19 +153,21 @@ class TeleprotoClient
         $finalApiId = $apiId ?? $this->defaultApiId;
         $finalApiHash = $apiHash ?? $this->defaultApiHash;
         $finalProxy = $proxyConfig ?? $this->defaultProxyConfig;
+        $finalDcId = $dcId ?? $this->defaultDcId;
+        $targetSession = $session ?? $this->defaultBotSession;
 
         if (empty($finalApiId) || empty($finalApiHash)) {
             throw new RuntimeException("Telegram API ID and API Hash are required for MTProto connections.");
         }
 
-        if ($session instanceof SessionData) {
-            $sessionData = $session;
-        } elseif (is_string($session) && str_contains(base64_decode($session, true) ?: '', ':')) {
-            $sessionData = SessionData::importString($session);
+        if ($targetSession instanceof SessionData) {
+            $sessionData = $targetSession;
+        } elseif (is_string($targetSession) && str_contains(base64_decode($targetSession, true) ?: '', ':')) {
+            $sessionData = SessionData::importString($targetSession);
         } else {
             $sessionData = new SessionData(
-                dcId: $dcId,
-                authKey: is_string($session) ? $session : ''
+                dcId: $finalDcId,
+                authKey: is_string($targetSession) ? $targetSession : ''
             );
         }
 

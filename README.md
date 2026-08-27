@@ -37,6 +37,45 @@ TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 # Obtain from https://my.telegram.org (API development tools)
 TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH="your_api_hash_here"
+
+# Automatically configured by running `php artisan teleproto:login`
+TELEGRAM_USER_SESSION="2:AQAD...:12345678:0"
+TELEGRAM_BOT_SESSION="2:AQAD...:98765432:0"
+```
+
+---
+
+## ⚡ Interactive MTProto Login Wizard (`teleproto:login`)
+
+Teleproto includes an interactive Artisan CLI command to authenticate User and Bot sessions over MTProto with zero boilerplate:
+
+```bash
+php artisan teleproto:login
+```
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Teleproto MTProto 2.0 Authentication Wizard                 │
+└─────────────────────────────────────────────────────────────┘
+Select Authentication Method:
+ [phone] 📱 User Account: Phone Number & Verification Code
+ [qr]    📷 User Account: Scan QR Code with Telegram App
+ [bot]   🤖 Bot Account: High-Speed MTProto Bot Token
+```
+
+- **Phone Login**: Prompts for phone, sends login code via Telegram/SMS, handles 2FA Cloud Password (`account.getPassword` + SRP-6a) automatically, and writes `TELEGRAM_USER_SESSION` to `.env`.
+- **QR Code Login**: Generates an ANSI terminal QR code (`tg://login?token=...`) ready to scan directly from your Telegram mobile app (`Settings -> Devices -> Link Desktop Device`).
+- **Bot MTProto Login**: Authenticates your bot token on Telegram's core Data Centers via `auth.importBotAuthorization` and writes `TELEGRAM_BOT_SESSION` to `.env`.
+
+Once configured in `.env`, calling `TP::user()` or `TP::botMtproto()` requires **zero parameters**:
+```php
+use MeRezaRezaei\Teleproto\Facades\TP;
+
+// Automatically connects using TELEGRAM_USER_SESSION from .env:
+TP::user()->sendMessage('@channel', 'Hello from zero-config MTProto!');
+
+// Automatically connects using TELEGRAM_BOT_SESSION from .env:
+TP::botMtproto()->sendMessage('@channel', 'Bot broadcast over MTProto!');
 ```
 
 ---
