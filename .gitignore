@@ -3,3 +3,6 @@ vendor/
 .phpunit.cache/
 .env
 composer.lock
+
+.superpowers/
+.worktrees/
