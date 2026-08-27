@@ -24,6 +24,9 @@ class TLRegistry
     /** @var array<string, int> name => id */
     protected static array $ids = [];
 
+    /** @var array<int, string> id => name */
+    protected static array $names = [];
+
     /** @var array<string, string> name => canonical line */
     protected static array $signatures = [];
 
@@ -69,6 +72,7 @@ class TLRegistry
             $id = (int)hexdec(str_pad($m[2], 8, '0', STR_PAD_LEFT));
         }
         static::$ids[$name] = $id;
+        static::$names[$id] = $name;
         static::$signatures[$name] = $canonicalLine;
     }
 
@@ -88,6 +92,12 @@ class TLRegistry
             throw new InvalidArgumentException("TLRegistry: unknown constructor '{$constructorName}'");
         }
         return static::$signatures[$constructorName];
+    }
+
+    public static function nameOf(int $id): ?string
+    {
+        self::boot();
+        return static::$names[$id] ?? null;
     }
 
     /**
