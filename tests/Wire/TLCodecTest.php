@@ -149,6 +149,42 @@ class TLCodecTest extends TestCase
         $this->assertSame(strlen($bin), $offset);
     }
 
+    public function testFlagsSetEncodesAndDecodesPresentOptional(): void
+    {
+        // Dummy InputClientProxy so the optional nested object resolves by id.
+        // Id computed by register() itself from the canonical line (crc32 = 0x8795cc26, no collision).
+        TLRegistry::register('inputClientProxyForTest host:string port:int = InputClientProxy');
+
+        $args = [
+            'flags' => 1, // bit 0 set: proxy present, bit 1 clear: params absent
+            'api_id' => 12345,
+            'device_model' => 'test',
+            'system_version' => 'test',
+            'app_version' => '1.0',
+            'system_lang_code' => 'en',
+            'lang_pack' => '',
+            'lang_code' => 'en',
+            'proxy' => ['_' => 'inputClientProxyForTest', 'host' => '127.0.0.1', 'port' => 8080],
+            'query' => ['_' => 'help.getNearestDc'],
+        ];
+        $bin = TLEncoder::encodeObject('initConnection', $args);
+        // Wire shape: the optional must sit between lang_code and query, bit-encoded via flags.
+        // Layout: id(4) flags(4) api_id(4) + strings 8+8+4+4+4+4 = offset 44 for the proxy id.
+        $this->assertSame(pack('V', 0xc1cd5ea9), substr($bin, 0, 4));
+        $this->assertSame(pack('V', 0x8795cc26), substr($bin, 44, 4));
+
+        $offset = 0;
+        $decoded = TLDecoder::decodeObject($bin, $offset);
+        $this->assertSame('initConnection', $decoded['_']);
+        $this->assertSame(1, $decoded['flags']);
+        $this->assertSame('inputClientProxyForTest', $decoded['proxy']['_']);
+        $this->assertSame('127.0.0.1', $decoded['proxy']['host']);
+        $this->assertSame(8080, $decoded['proxy']['port']);
+        $this->assertArrayNotHasKey('params', $decoded);
+        $this->assertSame('help.getNearestDc', $decoded['query']['_']);
+        $this->assertSame(strlen($bin), $offset);
+    }
+
     public function testUnknownConstructorThrowsWithHexId(): void
     {
         $this->expectException(\RuntimeException::class);

@@ -30,6 +30,8 @@ class TLRegistry
     /** @var array<string, string> name => canonical line */
     protected static array $signatures = [];
 
+    protected static bool $booted = false;
+
     public const SCHEMA = [
         'req_pq_multi nonce:int128 = ResPQ',
         'resPQ nonce:int128 server_nonce:int128 pq:string server_public_key_fingerprints:Vector long = ResPQ',
@@ -53,9 +55,10 @@ class TLRegistry
 
     protected static function boot(): void
     {
-        if (static::$ids !== []) {
+        if (static::$booted) {
             return;
         }
+        static::$booted = true; // set before seeding: register() re-enters boot()
         foreach (self::SCHEMA as $line) {
             self::register($line);
         }
@@ -63,6 +66,7 @@ class TLRegistry
 
     public static function register(string $canonicalLine): void
     {
+        self::boot(); // seeding must not depend on call order: register-before-lookup still seeds SCHEMA
         if (!preg_match('/^([A-Za-z0-9_.]+)#([0-9a-fA-F]{1,8})\b/', $canonicalLine, $m)) {
             // Line without explicit id: compute from the full canonical string.
             $name = trim(explode(' ', $canonicalLine)[0]);
