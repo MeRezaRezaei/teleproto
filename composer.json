@@ -36,7 +36,8 @@
                 "MeRezaRezaei\\Teleproto\\TeleprotoServiceProvider"
             ],
             "aliases": {
-                "Teleproto": "MeRezaRezaei\\Teleproto\\Facades\\Teleproto"
+                "Teleproto": "MeRezaRezaei\\Teleproto\\Facades\\Teleproto",
+                "TP": "MeRezaRezaei\\Teleproto\\Facades\\TP"
             }
         }
     }
