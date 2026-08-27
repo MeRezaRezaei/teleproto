@@ -6,12 +6,16 @@ namespace MeRezaRezaei\Teleproto\Services;
 
 use MeRezaRezaei\Teleproto\MTProto\Client as MTProtoClient;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
+use MeRezaRezaei\Teleproto\Types\InputContact;
 use MeRezaRezaei\Teleproto\Types\InputPeer;
 
 /**
  * Scoped User MTProto operations with typed helper methods and full PHPDoc method mappings.
  *
  * @see \MeRezaRezaei\Teleproto\Types\InputPeer
+ * @see \MeRezaRezaei\Teleproto\Types\InputUser
+ * @see \MeRezaRezaei\Teleproto\Types\InputChannel
+ * @see \MeRezaRezaei\Teleproto\Types\InputContact
  * @see \MeRezaRezaei\Teleproto\Types\InputMedia
  * @see \MeRezaRezaei\Teleproto\Entities\EntityParser
  * @see \MeRezaRezaei\Teleproto\Media\StorageMedia
@@ -75,6 +79,60 @@ class UserAccountScope
             'message' => $message,
             'random_id' => random_int(1, PHP_INT_MAX),
         ], $options));
+    }
+
+    /**
+     * Sends a reaction (emoji) to a message.
+     *
+     * @param int|string|array<string, mixed> $peer Target chat
+     * @param int $msgId Target message ID
+     * @param list<array<string, mixed>>|string $reaction Emoji string (e.g. '👍') or reaction array
+     * @param array<string, mixed> $options
+     * @return array<string, mixed> Updates object
+     */
+    public function sendReaction(int|string|array $peer, int $msgId, array|string $reaction = '👍', array $options = []): array
+    {
+        $reactionList = is_string($reaction)
+            ? [['_' => 'reactionEmoji', 'emoticon' => $reaction]]
+            : $reaction;
+
+        return $this->call('messages.sendReaction', array_merge([
+            'peer' => $this->normalizePeer($peer),
+            'msg_id' => $msgId,
+            'reaction' => $reactionList,
+        ], $options));
+    }
+
+    /**
+     * Pins a message in a chat or channel.
+     *
+     * @param int|string|array<string, mixed> $peer Target chat
+     * @param int $msgId Message ID to pin
+     * @param bool $silent Pin silently without notifying users
+     * @param bool $pmOneSide Pin only for self in private chat
+     * @return array<string, mixed>
+     */
+    public function pinMessage(int|string|array $peer, int $msgId, bool $silent = false, bool $pmOneSide = false): array
+    {
+        return $this->call('messages.updatePinnedMessage', [
+            'peer' => $this->normalizePeer($peer),
+            'id' => $msgId,
+            'silent' => $silent,
+            'pm_oneside' => $pmOneSide,
+        ]);
+    }
+
+    /**
+     * Unpins all messages in a chat or channel.
+     *
+     * @param int|string|array<string, mixed> $peer Target chat
+     * @return array<string, mixed>
+     */
+    public function unpinAllMessages(int|string|array $peer): array
+    {
+        return $this->call('messages.unpinAllMessages', [
+            'peer' => $this->normalizePeer($peer),
+        ]);
     }
 
     /**
@@ -166,7 +224,7 @@ class UserAccountScope
      * @param int|array<string, mixed> $user User ID or InputUser array
      * @return array<string, mixed> users.userFull
      *
-     * @see \MeRezaRezaei\Teleproto\Types\InputPeer
+     * @see \MeRezaRezaei\Teleproto\Types\InputUser
      */
     public function getFullUser(int|array $user): array
     {
@@ -183,7 +241,7 @@ class UserAccountScope
      * @param int|array<string, mixed> $channel Channel ID or InputChannel array
      * @return array<string, mixed> messages.chatFull
      *
-     * @see \MeRezaRezaei\Teleproto\Types\InputPeer
+     * @see \MeRezaRezaei\Teleproto\Types\InputChannel
      */
     public function getFullChannel(int|array $channel): array
     {
@@ -222,6 +280,198 @@ class UserAccountScope
             : $channel;
 
         return $this->call('channels.leaveChannel', ['channel' => $inputChannel]);
+    }
+
+    /**
+     * Creates a new Channel or Supergroup.
+     *
+     * @param string $title Channel title
+     * @param string $about Channel description
+     * @param bool $megagroup True to create a supergroup/gigagroup, False for broadcast channel
+     * @param bool $forImport True if importing chat history
+     * @return array<string, mixed> Updates object
+     */
+    public function createChannel(string $title, string $about = '', bool $megagroup = false, bool $forImport = false): array
+    {
+        return $this->call('channels.createChannel', [
+            'broadcast' => !$megagroup,
+            'megagroup' => $megagroup,
+            'for_import' => $forImport,
+            'title' => $title,
+            'about' => $about,
+        ]);
+    }
+
+    /**
+     * Invites users to a channel or supergroup.
+     *
+     * @param int|string|array<string, mixed> $channel Target channel
+     * @param list<array<string, mixed>|int> $users Array of User IDs or InputUser objects
+     * @return array<string, mixed> Updates object
+     */
+    public function inviteToChannel(int|string|array $channel, array $users): array
+    {
+        $inputUsers = array_map(function ($u) {
+            return is_int($u) ? ['_' => 'inputUser', 'user_id' => $u, 'access_hash' => 0] : $u;
+        }, $users);
+
+        $inputChannel = is_int($channel)
+            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            : $channel;
+
+        return $this->call('channels.inviteToChannel', [
+            'channel' => $inputChannel,
+            'users' => $inputUsers,
+        ]);
+    }
+
+    /**
+     * Retrieves participants (members, admins, banned, etc.) in a channel or supergroup.
+     *
+     * @param int|string|array<string, mixed> $channel
+     * @param array<string, mixed> $filter ChannelParticipantsFilter (e.g. channelParticipantsRecent, channelParticipantsAdmins)
+     * @param int $offset
+     * @param int $limit
+     * @return array<string, mixed> channels.channelParticipants
+     */
+    public function getParticipants(int|string|array $channel, array $filter = [], int $offset = 0, int $limit = 50): array
+    {
+        $inputChannel = is_int($channel)
+            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            : $channel;
+
+        return $this->call('channels.getParticipants', [
+            'channel' => $inputChannel,
+            'filter' => empty($filter) ? ['_' => 'channelParticipantsRecent'] : $filter,
+            'offset' => $offset,
+            'limit' => $limit,
+            'hash' => 0,
+        ]);
+    }
+
+    /**
+     * Retrieves address book contacts with Telegram accounts.
+     *
+     * @param int $hash Hash of current contact list
+     * @return array<string, mixed> contacts.contacts
+     */
+    public function getContacts(int $hash = 0): array
+    {
+        return $this->call('contacts.getContacts', ['hash' => $hash]);
+    }
+
+    /**
+     * Imports contacts into the user's address book.
+     *
+     * @param list<array<string, mixed>> $contacts Array of InputContact objects
+     * @return array<string, mixed> contacts.importedContacts
+     *
+     * @see \MeRezaRezaei\Teleproto\Types\InputContact
+     */
+    public function importContacts(array $contacts): array
+    {
+        return $this->call('contacts.importContacts', [
+            'contacts' => $contacts,
+        ]);
+    }
+
+    /**
+     * Deletes contacts from the address book.
+     *
+     * @param list<array<string, mixed>|int> $userIds Array of User IDs or InputUser objects
+     * @return array<string, mixed>
+     */
+    public function deleteContacts(array $userIds): array
+    {
+        $inputUsers = array_map(function ($u) {
+            return is_int($u) ? ['_' => 'inputUser', 'user_id' => $u, 'access_hash' => 0] : $u;
+        }, $userIds);
+
+        return $this->call('contacts.deleteContacts', [
+            'id' => $inputUsers,
+        ]);
+    }
+
+    /**
+     * Searches contacts and global Telegram users by query.
+     *
+     * @param string $query
+     * @param int $limit
+     * @return array<string, mixed> contacts.found
+     */
+    public function searchContacts(string $query, int $limit = 50): array
+    {
+        return $this->call('contacts.search', [
+            'q' => $query,
+            'limit' => $limit,
+        ]);
+    }
+
+    /**
+     * Updates user's first name, last name, and bio (about).
+     *
+     * @param string|null $firstName
+     * @param string|null $lastName
+     * @param string|null $about
+     * @return array<string, mixed> User object
+     */
+    public function updateProfile(?string $firstName = null, ?string $lastName = null, ?string $about = null): array
+    {
+        $params = [];
+        if ($firstName !== null) {
+            $params['first_name'] = $firstName;
+        }
+        if ($lastName !== null) {
+            $params['last_name'] = $lastName;
+        }
+        if ($about !== null) {
+            $params['about'] = $about;
+        }
+
+        return $this->call('account.updateProfile', $params);
+    }
+
+    /**
+     * Changes user's @username.
+     *
+     * @param string $username New username without @
+     * @return array<string, mixed>
+     */
+    public function updateUsername(string $username): array
+    {
+        return $this->call('account.updateUsername', ['username' => $username]);
+    }
+
+    /**
+     * Checks if a username is available.
+     *
+     * @param string $username
+     * @return array<string, mixed>
+     */
+    public function checkUsername(string $username): array
+    {
+        return $this->call('account.checkUsername', ['username' => $username]);
+    }
+
+    /**
+     * Updates online/offline presence status.
+     *
+     * @param bool $offline If true, set offline; if false, set online
+     * @return array<string, mixed>
+     */
+    public function updateStatus(bool $offline = false): array
+    {
+        return $this->call('account.updateStatus', ['offline' => $offline]);
+    }
+
+    /**
+     * Retrieves all active authorization sessions / logged-in devices.
+     *
+     * @return array<string, mixed> account.authorizations
+     */
+    public function getAuthorizations(): array
+    {
+        return $this->call('account.getAuthorizations');
     }
 
     /**

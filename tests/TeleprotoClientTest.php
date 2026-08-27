@@ -270,4 +270,38 @@ class TeleprotoClientTest extends TestCase
         $this->assertNotEmpty($qrString);
         $this->assertStringContainsString('█', $qrString);
     }
+
+    public function testUserSpecificMtprotoMethods(): void
+    {
+        $client = new TeleprotoClient(defaultApiId: 7777, defaultApiHash: 'hash7777');
+        $user = $client->user(12345, random_bytes(256));
+
+        // Reaction
+        $resReact = $user->sendReaction('@channel', 100, '🔥');
+        $this->assertEquals('messages.sendReaction', $resReact['method']);
+        $this->assertEquals('reactionEmoji', $resReact['params']['reaction'][0]['_']);
+        $this->assertEquals('🔥', $resReact['params']['reaction'][0]['emoticon']);
+
+        // Pin message
+        $resPin = $user->pinMessage('@channel', 100, silent: true);
+        $this->assertEquals('messages.updatePinnedMessage', $resPin['method']);
+        $this->assertTrue($resPin['params']['silent']);
+
+        // Create channel
+        $resChan = $user->createChannel('My Channel', 'About channel', megagroup: false);
+        $this->assertEquals('channels.createChannel', $resChan['method']);
+        $this->assertTrue($resChan['params']['broadcast']);
+
+        // Import contacts
+        $contact = \MeRezaRezaei\Teleproto\Types\InputContact::phone('+1234567890', 'John', 'Doe');
+        $resImport = $user->importContacts([$contact]);
+        $this->assertEquals('contacts.importContacts', $resImport['method']);
+        $this->assertEquals('+1234567890', $resImport['params']['contacts'][0]['phone']);
+
+        // Update profile
+        $resProfile = $user->updateProfile(firstName: 'Alice', about: 'Developer');
+        $this->assertEquals('account.updateProfile', $resProfile['method']);
+        $this->assertEquals('Alice', $resProfile['params']['first_name']);
+        $this->assertEquals('Developer', $resProfile['params']['about']);
+    }
 }
