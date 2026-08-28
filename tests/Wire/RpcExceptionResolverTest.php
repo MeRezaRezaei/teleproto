@@ -52,17 +52,33 @@ class RpcExceptionResolverTest extends TestCase
         $this->assertSame(500, $e->rpcErrorCode);
     }
 
-    public function testDocumentedEntriesAreVerbatimFromTelegramDocs(): void
+    public function testFullCatalogCoversNonAuthErrorsWithOfficialWording(): void
     {
-        // Spot-check official wording straight off the per-method tables:
-        $e = RpcExceptionResolver::resolve('PHONE_NUMBER_BANNED', 400);
-        $this->assertStringContainsString('banned from telegram', $e->getMessage());
+        // SLOWMODE_WAIT_%d template: number rendered into official description
+        $e = RpcExceptionResolver::resolve('SLOWMODE_WAIT_30', 420, 'messages.sendMessage');
+        $this->assertStringContainsString('wait 30 seconds before sending another message', $e->getMessage());
+        $this->assertStringContainsString('during messages.sendMessage', $e->getMessage());
+
+        // Documented code inherited from the catalog when the wire omits it
+        $this->assertSame(420, RpcExceptionResolver::documentedEntry('SLOWMODE_WAIT_30')[0]);
+
+        // FILE_MIGRATE_X is a documented 303 → DcMigrationException
+        $m = RpcExceptionResolver::resolve('FILE_MIGRATE_2');
+        $this->assertInstanceOf(DcMigrationException::class, $m);
+        $this->assertSame(2, $m->dcId);
+
+        // 406 errors carry the docs display guidance
         $e = RpcExceptionResolver::resolve('PHONE_NUMBER_INVALID', 406);
-        $this->assertStringContainsString('The phone number is invalid', $e->getMessage());
-        $e = RpcExceptionResolver::resolve('SRP_ID_INVALID', 400);
-        $this->assertStringContainsString('Invalid SRP ID provided', $e->getMessage());
-        $e = RpcExceptionResolver::resolve('ACCESS_TOKEN_INVALID', 400);
-        $this->assertStringContainsString('Access token invalid', $e->getMessage());
+        $this->assertStringContainsString('updateServiceNotification', $e->getMessage());
+    }
+
+    public function testCatalogLayerMatchesWireLayer(): void
+    {
+        $this->assertSame(
+            \MeRezaRezaei\Teleproto\MTProto\Connection\EncryptedConnection::LAYER,
+            \MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorCatalog::LAYER
+        );
+        $this->assertGreaterThan(700, count(\MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorCatalog::descriptions()));
     }
 
     public function testDocumentedEntryExposesDocsCodeAndDescription(): void

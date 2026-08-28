@@ -16,12 +16,14 @@ class RpcErrorException extends TelegramException
     public function __construct(
         public readonly string $rpcErrorMessage,
         public readonly int $rpcErrorCode,
-        public readonly string $docHint = ''
+        public readonly string $docHint = '',
+        public readonly ?string $rpcMethod = null
     ) {
+        $methodPart = $rpcMethod !== null ? " during {$rpcMethod}" : '';
         parent::__construct(
             $docHint !== ''
-                ? sprintf('MTProto RPC error %s (code %d): %s', $rpcErrorMessage, $rpcErrorCode, $docHint)
-                : sprintf('MTProto RPC error %s (code %d)', $rpcErrorMessage, $rpcErrorCode),
+                ? sprintf('MTProto RPC error %s (code %d)%s: %s', $rpcErrorMessage, $rpcErrorCode, $methodPart, $docHint)
+                : sprintf('MTProto RPC error %s (code %d)%s', $rpcErrorMessage, $rpcErrorCode, $methodPart),
             $rpcErrorCode
         );
     }

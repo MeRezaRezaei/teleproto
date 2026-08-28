@@ -155,7 +155,8 @@ class EncryptedConnection
             if (($inner['_'] ?? '') === 'rpc_error') {
                 throw RpcExceptionResolver::resolve(
                     (string)($inner['error_message'] ?? 'UNKNOWN'),
-                    (int)($inner['error_code'] ?? 0)
+                    (int)($inner['error_code'] ?? 0),
+                    $constructor
                 );
             }
             return $inner;

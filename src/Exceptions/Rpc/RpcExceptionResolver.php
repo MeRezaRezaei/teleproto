@@ -31,55 +31,41 @@ final class RpcExceptionResolver
     public const TRANSPORT_AUTH_KEY_UNKNOWN = -404;
 
     /**
-     * Documented error tables: message => [docs HTTP code, verbatim description].
-     * Remediation lines (prefixed with an arrow) are ours; descriptions are not.
+     * Curated remediations layered ON TOP of the official catalog wording
+     * for auth-flow errors callers act on. Official descriptions come from
+     * RpcErrorCatalog; only the arrow text after " → " is ours.
      *
-     * @return array<string, array{0: int, 1: string}>
+     * @return array<string, string> message => remediation (without official description)
      */
-    protected static function documentedErrors(): array
+    protected static function remediations(): array
     {
         return [
-            // auth.sendCode + auth.exportLoginToken + auth.importBotAuthorization
-            'API_ID_INVALID' => [400, 'API ID invalid. → Check the api_id/api_hash pair from my.telegram.org.'],
-            'API_ID_PUBLISHED_FLOOD' => [400, "This API id was published somewhere, you can't use it now. → Obtain your own api_id from my.telegram.org."],
-            'ACCESS_TOKEN_EXPIRED' => [400, 'Access token expired. → The bot token was revoked or rolled: get a fresh one from @BotFather.'],
-            'ACCESS_TOKEN_INVALID' => [400, 'Access token invalid. → Re-check the bot token from @BotFather.'],
-            'AUTH_RESTART' => [500, 'Restart the authorization process. → Start over from auth.sendCode / auth.exportLoginToken.'],
-
-            // auth.sendCode
-            'PHONE_NUMBER_APP_SIGNUP_FORBIDDEN' => [400, "You can't sign up using this app. → Sign up with an official client first, or use another app's api credentials."],
-            'PHONE_NUMBER_BANNED' => [400, 'The provided phone number is banned from telegram. → Nothing a client can do; the number is banned.'],
-            'PHONE_NUMBER_FLOOD' => [400, 'You asked for the code too many times. → Wait before requesting another code.'],
-            'PHONE_NUMBER_INVALID' => [406, 'The phone number is invalid. → Use full international format, e.g. +989123456789.'],
-            'PHONE_PASSWORD_FLOOD' => [406, 'You have tried logging in too many times. → Wait before retrying the login.'],
-            'PHONE_PASSWORD_PROTECTED' => [400, 'This phone is password protected.'],
-            'SMS_CODE_CREATE_FAILED' => [400, 'An error occurred while creating the SMS code. → Retry auth.sendCode.'],
-            'UPDATE_APP_TO_LOGIN' => [406, 'Please update your client to login. → Bump app_version/lang_code in initConnection and retry.'],
-
-            // auth.signIn
-            'PHONE_CODE_EMPTY' => [400, 'phone_code is missing. → Ask the user for the login code and send it in phone_code.'],
-            'PHONE_CODE_EXPIRED' => [400, 'The phone code you provided has expired. → Request a new code (auth.resendCode).'],
-            'PHONE_CODE_INVALID' => [400, 'The provided phone code is invalid. → Re-check the digits the user entered.'],
-            'PHONE_NUMBER_UNOCCUPIED' => [400, 'The phone number is not yet being used. → Complete signup (auth.signUp) or use another number.'],
-            'SIGN_IN_FAILED' => [500, 'Failure while signing in. → Retry the sign-in.'],
-
-            // auth.checkPassword
-            'PASSWORD_HASH_INVALID' => [400, 'The provided password hash is invalid. → Wrong 2FA password; re-ask the user, do not blind-retry.'],
-            'SRP_ID_INVALID' => [400, 'Invalid SRP ID provided. → Re-fetch account.getPassword and rebuild the SRP proof.'],
-            'SRP_PASSWORD_CHANGED' => [400, 'Password has changed. → Re-fetch account.getPassword and restart the SRP flow.'],
-            'AUTH_KEY_UNSYNCHRONIZED' => [500, 'Internal error, please repeat the method call. → Safe to retry.'],
-
-            // QR login (documented on auth.acceptLoginToken; also surfaced by the login flow)
-            'AUTH_TOKEN_INVALID' => [400, 'Invalid token provided.'],
-            'AUTH_TOKEN_EXPIRED' => [400, 'Token has expired. → Re-export a fresh QR login token.'],
-            'AUTH_TOKEN_ALREADY_ACCEPTED' => [400, 'Token was already used. → Re-export a fresh QR login token.'],
-
-            // 2FA gate (https://core.telegram.org/api/auth#2fa)
-            'SESSION_PASSWORD_NEEDED' => [401, '2FA is enabled on this account. → Fetch account.getPassword and complete the SRP flow (auth.checkPassword).'],
+            'API_ID_INVALID' => 'Check the api_id/api_hash pair from my.telegram.org.',
+            'API_ID_PUBLISHED_FLOOD' => 'Obtain your own api_id from my.telegram.org.',
+            'ACCESS_TOKEN_EXPIRED' => 'The bot token was revoked or rolled: get a fresh one from @BotFather.',
+            'ACCESS_TOKEN_INVALID' => 'Re-check the bot token from @BotFather.',
+            'AUTH_RESTART' => 'Start over from auth.sendCode / auth.exportLoginToken.',
+            'PHONE_NUMBER_APP_SIGNUP_FORBIDDEN' => "Sign up with an official client first, or use another app's api credentials.",
+            'PHONE_NUMBER_FLOOD' => 'Wait before requesting another code.',
+            'PHONE_NUMBER_INVALID' => 'Use full international format, e.g. +989123456789.',
+            'PHONE_PASSWORD_FLOOD' => 'Wait before retrying the login.',
+            'SMS_CODE_CREATE_FAILED' => 'Retry auth.sendCode.',
+            'UPDATE_APP_TO_LOGIN' => 'Bump app_version/lang_code in initConnection and retry.',
+            'PHONE_CODE_EMPTY' => 'Ask the user for the login code and send it in phone_code.',
+            'PHONE_CODE_EXPIRED' => 'Request a new code (auth.resendCode).',
+            'PHONE_CODE_INVALID' => 'Re-check the digits the user entered.',
+            'PHONE_NUMBER_UNOCCUPIED' => 'Complete signup (auth.signUp) or use another number.',
+            'SIGN_IN_FAILED' => 'Retry the sign-in.',
+            'SRP_ID_INVALID' => 'Re-fetch account.getPassword and rebuild the SRP proof.',
+            'SRP_PASSWORD_CHANGED' => 'Re-fetch account.getPassword and restart the SRP flow.',
+            'AUTH_KEY_UNSYNCHRONIZED' => 'Safe to retry.',
+            'AUTH_TOKEN_EXPIRED' => 'Re-export a fresh QR login token.',
+            'AUTH_TOKEN_ALREADY_ACCEPTED' => 'Re-export a fresh QR login token.',
+            'SESSION_PASSWORD_NEEDED' => 'Fetch account.getPassword and complete the SRP flow (auth.checkPassword).',
         ];
     }
 
-    public static function resolve(string $errorMessage, int $errorCode = 0): TelegramException
+    public static function resolve(string $errorMessage, int $errorCode = 0, ?string $method = null): TelegramException
     {
         $message = strtoupper(trim($errorMessage));
 
@@ -88,37 +74,65 @@ final class RpcExceptionResolver
             return new FloodWaitException((int)$m[1], $message, $errorCode);
         }
 
-        // PHONE_MIGRATE_X (registered users) / NETWORK_MIGRATE_X (new, by IP) — https://core.telegram.org/api/datacenter
-        if (preg_match('/^(?:PHONE|NETWORK|USER)_MIGRATE_(\d+)$/', $message, $m)) {
+        // FILE/PHONE/NETWORK/USER_MIGRATE_X — https://core.telegram.org/api/errors (303 SEE_OTHER)
+        if (preg_match('/^(?:FILE|PHONE|NETWORK|USER)_MIGRATE_(\d+)$/', $message, $m)) {
             return new DcMigrationException(
                 (int)$m[1],
-                "{$message} — reconnect at DC {$m[1]} and retry (per https://core.telegram.org/api/datacenter)",
-                $errorCode
+                "{$message} — repeat the request at DC {$m[1]} (per https://core.telegram.org/api/datacenter)",
+                $errorCode,
+                null
             );
         }
 
-        $doc = self::documentedErrors()[$message] ?? null;
+        // Full official database first (all 780 documented errors, layer 227)
+        $catalog = RpcErrorCatalog::lookup($message);
+        $docsCode = $catalog !== null ? (RpcErrorCatalog::codeOf($catalog[0]) ?? 0) : 0;
+        $effectiveCode = $errorCode !== 0 ? $errorCode : $docsCode;
 
-        return match (true) {
-            $message === 'SESSION_PASSWORD_NEEDED' => new SessionPasswordNeededException($message, $errorCode),
-            $message === 'PASSWORD_HASH_INVALID' => new PasswordHashInvalidException($message, $errorCode),
-            str_starts_with($message, 'PHONE_CODE_') => new PhoneCodeException($message, $errorCode),
-            str_starts_with($message, 'PHONE_NUMBER_') => new PhoneNumberException($message, $errorCode),
-            str_starts_with($message, 'API_ID_') => new ApiIdException($message, $errorCode),
+        // Typed classes for errors callers branch on programmatically
+        $typed = match (true) {
+            $message === 'SESSION_PASSWORD_NEEDED' => new SessionPasswordNeededException($message, $effectiveCode),
+            $message === 'PASSWORD_HASH_INVALID' => new PasswordHashInvalidException($message, $effectiveCode),
+            str_starts_with($message, 'PHONE_CODE_') => new PhoneCodeException($message, $effectiveCode),
+            str_starts_with($message, 'PHONE_NUMBER_') => new PhoneNumberException($message, $effectiveCode),
+            str_starts_with($message, 'API_ID_') => new ApiIdException($message, $effectiveCode),
             in_array($message, ['AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'], true)
-                => new AuthKeyException($message, $errorCode),
-            default => new RpcErrorException($message, $errorCode, $doc[1] ?? ''),
+                => new AuthKeyException($message, $effectiveCode),
+            default => null,
         };
+
+        // Prefer the official catalog description; curated remediation refines auth-flow errors
+        $hint = $catalog[1] ?? '';
+        $remediation = self::remediations()[$message] ?? null;
+        if ($remediation !== null) {
+            $hint = ($hint !== '' ? $hint . ' → ' : '') . $remediation;
+        }
+
+        // 406 special display guidance — https://core.telegram.org/api/errors#406-not-acceptable
+        if ($effectiveCode === 406 && $hint !== '') {
+            $hint .= ' · Per docs: do not display 406 errors directly; an updateServiceNotification popup follows with the localized message.';
+        }
+
+        if ($typed !== null) {
+            return $typed;
+        }
+
+        return new RpcErrorException($message, $effectiveCode, $hint, $method);
     }
 
     /**
-     * The docs table entry for a message, if documented.
+     * The official database entry for a wire message (template match,
+     * %d values rendered into the description), if documented.
      *
-     * @return array{0: int, 1: string}|null
+     * @return array{0: int, 1: string}|null [code, rendered description]
      */
     public static function documentedEntry(string $errorMessage): ?array
     {
-        return self::documentedErrors()[strtoupper(trim($errorMessage))] ?? null;
+        $hit = RpcErrorCatalog::lookup($errorMessage);
+        if ($hit === null) {
+            return null;
+        }
+        return [RpcErrorCatalog::codeOf($hit[0]) ?? 0, $hit[1]];
     }
 
     /**
