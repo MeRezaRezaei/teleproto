@@ -40,14 +40,19 @@ class TLRegistryTest extends TestCase
             // Response-side constructors the wire path can genuinely receive.
             // Provenance: nearestDc from core.telegram.org/method/help.getNearestDc
             // (nearestDc#8e1a1775); handshake rejection constructors from
-            // core.telegram.org/mtproto/auth_key (server_DH_params_fail#c285e6a4,
-            // dh_gen_retry#46dc1fb9, dh_gen_fail#a69dae02); transient service
-            // messages from core.telegram.org/mtproto/service_messages
-            // (msgs_ack#62d6b459 — canonicalized brace-less `Vector long`, the
-            // registry's Vector<long> convention as for resPQ — and
+            // core.telegram.org/mtproto/auth_key and the schemas of major
+            // clients (server_DH_params_fail#79cb045d, dh_gen_retry#46dc1fb9,
+            // dh_gen_fail#a69dae02); transient service messages from
+            // core.telegram.org/mtproto/service_messages (msgs_ack#62d6b459 —
+            // canonicalized brace-less `Vector long`, the registry's
+            // Vector<long> convention as for resPQ — and
             // new_session_created#9ec20908).
+            // Correction (round-2): the original round-1 golden registered a
+            // fabricated signature 'server_DH_params_fail ... retry:int'
+            // (0xc285e6a4) that exists in no client or spec; the real
+            // constructor carries new_nonce_hash:int128 -> 0x79cb045d.
             'nearestDc' => 0x8e1a1775,
-            'server_DH_params_fail' => 0xc285e6a4,
+            'server_DH_params_fail' => 0x79cb045d,
             'dh_gen_retry' => 0x46dc1fb9,
             'dh_gen_fail' => 0xa69dae02,
             'msgs_ack' => 0x62d6b459,
