@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\Services;
 
+use MeRezaRezaei\Teleproto\Exceptions\DcMigrationException;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
+use RuntimeException;
 
 /**
  * Service for Telegram MTProto 2.0 User & Bot Authentication workflows.
@@ -14,9 +16,24 @@ class TeleprotoAuthService
 {
     protected TeleprotoClient $client;
 
-    public function __construct(?TeleprotoClient $client = null)
+    protected bool $live;
+
+    public function __construct(?TeleprotoClient $client = null, bool $live = true)
     {
         $this->client = $client ?? new TeleprotoClient();
+        $this->live = $live;
+    }
+
+    /**
+     * Enables live wire mode on a freshly created MTProto scope.
+     * Authentication only ever makes sense against real servers;
+     * tests construct the service with live=false.
+     */
+    protected function goLive(UserAccountScope|BotAccountScope $scope): void
+    {
+        if ($this->live) {
+            $scope->mtproto->live();
+        }
     }
 
     /**
@@ -38,6 +55,7 @@ class TeleprotoAuthService
     ): array {
         $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
         $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
+        $this->goLive($user);
 
         $res = $user->call('auth.sendCode', [
             'phone_number' => $phone,
@@ -112,6 +130,7 @@ class TeleprotoAuthService
     ): array {
         $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
         $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
+        $this->goLive($user);
 
         $res = $user->call('auth.exportLoginToken', [
             'api_id'     => $apiId,
@@ -152,6 +171,7 @@ class TeleprotoAuthService
     ): array {
         $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
         $bot = $this->client->botMtproto(botToken: $botToken, session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
+        $this->goLive($bot);
 
         $authRes = $bot->login();
 
@@ -160,5 +180,72 @@ class TeleprotoAuthService
             'bot'     => $bot,
             'raw'     => $authRes,
         ];
+    }
+
+    /**
+     * Polls auth.exportLoginToken until the QR is scanned (loginTokenSuccess),
+     * the account lives on another DC (throws DcMigrationException — reconnect
+     * there and call importLoginTokenAt with the exception token), or timeout.
+     *
+     * @param \Closure(string, int): void|null $onToken Called with (loginUrl, expiresInSeconds) whenever the token refreshes
+     * @return array<string, mixed> auth.Authorization from loginTokenSuccess
+     */
+    public function pollQrLoginToken(
+        UserAccountScope $user,
+        int $apiId,
+        string $apiHash,
+        ?\Closure $onToken = null,
+        int $timeoutSeconds = 300
+    ): array {
+        $deadline = time() + $timeoutSeconds;
+        while (time() < $deadline) {
+            $res = $user->call('auth.exportLoginToken', [
+                'api_id' => $apiId,
+                'api_hash' => $apiHash,
+                'except_ids' => [],
+            ]);
+            $name = (string)($res['_'] ?? '');
+            if ($name === 'auth.loginToken') {
+                if ($onToken !== null) {
+                    $raw = (string)$res['token'];
+                    $b64 = rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+                    $onToken('tg://login?token=' . $b64, (int)$res['expires']);
+                }
+                sleep(2);
+                continue;
+            }
+            if ($name === 'auth.loginTokenMigrateTo') {
+                throw new DcMigrationException(
+                    (int)$res['dc_id'],
+                    'QR login requires migration to DC ' . (int)$res['dc_id'],
+                    303,
+                    (string)$res['token']
+                );
+            }
+            if ($name === 'auth.loginTokenSuccess') {
+                return (array)$res['authorization'];
+            }
+            throw new RuntimeException('TeleprotoAuthService: unexpected QR login response ' . $name);
+        }
+        throw new RuntimeException('TeleprotoAuthService: QR login timed out after ' . $timeoutSeconds . 's');
+    }
+
+    /**
+     * Continues QR login on the migrated DC with the token from DcMigrationException.
+     *
+     * @return array<string, mixed> auth.Authorization
+     */
+    public function importLoginTokenAt(int $dcId, string $token, int $apiId, string $apiHash, ?SessionData $session = null): array
+    {
+        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
+        $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
+        $this->goLive($user);
+
+        $res = $user->call('auth.importLoginToken', ['token' => $token]);
+        $name = (string)($res['_'] ?? '');
+        if ($name === 'auth.loginTokenSuccess') {
+            return (array)$res['authorization'];
+        }
+        throw new RuntimeException('TeleprotoAuthService: unexpected importLoginToken response ' . $name);
     }
 }

@@ -364,7 +364,7 @@ class TeleprotoClientTest extends TestCase
 
     public function testTeleprotoAuthServiceMethods(): void
     {
-        $authService = new \MeRezaRezaei\Teleproto\Services\TeleprotoAuthService();
+        $authService = new \MeRezaRezaei\Teleproto\Services\TeleprotoAuthService(live: false);
 
         // 1. Phone code flow
         $phoneRes = $authService->sendPhoneCode('+1234567890', 12345, 'hash123');

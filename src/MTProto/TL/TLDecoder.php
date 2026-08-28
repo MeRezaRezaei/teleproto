@@ -30,18 +30,18 @@ class TLDecoder
         }
 
         $result = ['_' => $name];
-        $flags = 0;
+        $flagWords = [];
         foreach (TLEncoder::fieldsOf(TLRegistry::signature($name)) as [$fieldName, $fieldType]) {
             if ($fieldType === 'flags' || $fieldType === '#') {
-                $flags = TLSerializer::unpackInt($data, $offset);
-                $result[$fieldName] = $flags;
+                $flagWords[$fieldName] = TLSerializer::unpackInt($data, $offset);
+                $result[$fieldName] = $flagWords[$fieldName];
                 continue;
             }
-            if (preg_match('/^flags\.(\d+)\?(.+)$/', $fieldType, $m)) {
-                if (($flags & (1 << (int)$m[1])) === 0) {
+            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m) && isset($flagWords[$m[1]])) {
+                if (($flagWords[$m[1]] & (1 << (int)$m[2])) === 0) {
                     continue; // bit clear: field absent from the wire
                 }
-                $result[$fieldName] = self::decodeValue($m[2], $data, $offset);
+                $result[$fieldName] = self::decodeValue($m[3], $data, $offset);
                 continue;
             }
             $result[$fieldName] = self::decodeValue($fieldType, $data, $offset);
@@ -54,6 +54,7 @@ class TLDecoder
         return match (true) {
             $type === 'int' => TLSerializer::unpackInt($data, $offset),
             $type === 'long' => TLSerializer::unpackLong($data, $offset),
+            $type === 'true' => true, // presence was encoded by the flag bit alone
             $type === 'int128' => self::rawBytes($data, $offset, 16),
             $type === 'int256' => self::rawBytes($data, $offset, 32),
             $type === 'bytes' || $type === 'string' => TLSerializer::unpackString($data, $offset),

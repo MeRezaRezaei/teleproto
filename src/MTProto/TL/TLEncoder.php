@@ -13,26 +13,26 @@ class TLEncoder
         $bin = TLSerializer::packInt(TLRegistry::id($constructor));
         $signature = TLRegistry::signature($constructor);
         $fields = self::fieldsOf($signature);
-        $flags = 0;
+        $flagWords = [];
         foreach ($fields as [$fieldName, $fieldType]) {
             if ($fieldType === 'flags' || $fieldType === '#') {
-                $flags = (int)($args[$fieldName] ?? 0);
+                $flagWords[$fieldName] = (int)($args[$fieldName] ?? 0);
             }
         }
         foreach ($fields as [$fieldName, $fieldType]) {
             if ($fieldType === 'flags' || $fieldType === '#') {
-                $bin .= TLSerializer::packInt((int)($args[$fieldName] ?? 0));
+                $bin .= TLSerializer::packInt($flagWords[$fieldName]);
                 continue;
             }
-            if (preg_match('/^flags\.(\d+)\?/', $fieldType, $m)) {
+            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m) && isset($flagWords[$m[1]])) {
                 if (!array_key_exists($fieldName, $args) || $args[$fieldName] === null) {
                     continue; // bit clear: field absent from the wire
                 }
-                $bit = 1 << (int)$m[1];
-                if (($flags & $bit) === 0) {
-                    throw new RuntimeException("TLEncoder: field '{$fieldName}' for {$constructor} is set but flag bit {$m[1]} is not");
+                $bit = 1 << (int)$m[2];
+                if (($flagWords[$m[1]] & $bit) === 0) {
+                    throw new RuntimeException("TLEncoder: field '{$fieldName}' for {$constructor} is set but {$m[1]} bit {$m[2]} is not");
                 }
-                $bin .= self::encodeValue(substr($fieldType, strpos($fieldType, '?') + 1), $args[$fieldName]);
+                $bin .= self::encodeValue($m[3], $args[$fieldName]);
                 continue;
             }
             if (!array_key_exists($fieldName, $args)) {
@@ -48,6 +48,7 @@ class TLEncoder
         return match (true) {
             $type === 'int' => TLSerializer::packInt((int)$value),
             $type === 'long' => TLSerializer::packLong((int)$value),
+            $type === 'true' => '', // presence is encoded by the flag bit alone
             $type === 'int128' || $type === 'int256' => str_pad((string)$value, $type === 'int128' ? 16 : 32, "\x00", STR_PAD_LEFT),
             $type === 'bytes' || $type === 'string' => TLSerializer::packString((string)$value),
             str_starts_with($type, 'Vector<') => TLSerializer::packVector(

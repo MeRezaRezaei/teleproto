@@ -10,6 +10,7 @@ class DcMigrationException extends TelegramException
         public int $dcId,
         string $message = '',
         int $code = 303,
+        public ?string $token = null,
         ?\Throwable $previous = null
     ) {
         parent::__construct(
