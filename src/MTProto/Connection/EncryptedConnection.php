@@ -41,6 +41,7 @@ class EncryptedConnection
     protected int $sessionId;
     protected bool $inited = false;
     protected int $lastMessageId = 0;
+    protected int $contentCounter = -1;
 
     /** @param resource|null $socket */
     final public function __construct(protected SessionData $session, $socket = null, protected int $apiId = 0)
@@ -120,7 +121,7 @@ class EncryptedConnection
                 authKey: $this->session->authKey,
                 sessionId: $this->sessionId,
                 serverSalt: $this->serverSalt,
-                seqNo: 0, // multi-in-flight seq_no tracking is out of scope for this task
+                seqNo: $this->nextContentSeqNo(), // content messages require an odd, increasing seq_no
                 serverTimeDelta: $this->session->serverTimeDelta,
                 messageId: $this->nextMessageId()
             );
@@ -130,7 +131,16 @@ class EncryptedConnection
 
             if (($result['_'] ?? '') === 'bad_server_salt') {
                 $this->serverSalt = (int)$result['new_server_salt'];
-                continue; // resend with the fresh salt
+                continue; // resend with the fresh salt and a fresh msg_id/seq_no
+            }
+
+            if (($result['_'] ?? '') === 'bad_msg_notification') {
+                throw new RuntimeException(sprintf(
+                    'EncryptedConnection: bad_msg_notification code %d for msg_id %s (seq %d)',
+                    (int)($result['error_code'] ?? 0),
+                    (string)($result['bad_msg_id'] ?? '?'),
+                    (int)($result['bad_msg_seqno'] ?? -1)
+                ));
             }
 
             if (($result['_'] ?? '') !== 'rpc_result') {
@@ -175,7 +185,7 @@ class EncryptedConnection
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
             $frame = FrameCodec::receiveAbridgedMessage($this->socket);
             $msg = PacketCodec::decryptPacket($frame, $this->session->authKey);
-            $payload = $msg['payload'];
+            $payload = $msg["payload"];
 
             $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
             if (in_array($id, $transientIds, true)) {
@@ -183,22 +193,86 @@ class EncryptedConnection
             }
 
             $offset = 0;
-            return TLDecoder::decodeObject($payload, $offset);
+            $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
+
+            // msg_container uses naked encoding (id + count + {msg_id, seqno, bytes, body} tuples,
+            // no vector header, no per-message constructor) — must be hand-parsed.
+            if ($id === 0x73f1f8dc) {
+                $actionable = self::parseNakedContainer($payload, $this->serverSalt);
+                $this->serverSalt = $actionable['salt'];
+                if ($actionable['message'] === null) {
+                    continue; // container held only transients; keep reading
+                }
+                return $actionable['message'];
+            }
+
+            $decoded = TLDecoder::decodeObject($payload, $offset);
+            return $decoded;
         }
         throw new RuntimeException('EncryptedConnection: too many consecutive transient messages');
     }
 
     /**
-     * Encrypted client content message id: ≡ 1 (mod 4), strictly increasing.
-     * (PacketCodec::generateMessageId yields ≡ 0 mod 4 ids for plain messages — not usable here.)
+     * Parses a naked-encoded msg_container payload. Returns the first
+     * actionable decoded body (or null when every element was transient)
+     * plus the possibly-refreshed server salt from new_session_created.
+     *
+     * @return array{message: array<string, mixed>|null, salt: int}
+     */
+    protected static function parseNakedContainer(string $payload, int $currentSalt): array
+    {
+        $transientIds = self::transientConstructorIds();
+        $salt = $currentSalt;
+        $offset = 4;
+        $count = unpack('V', substr($payload, $offset, 4))[1];
+        $offset += 4;
+
+        for ($i = 0; $i < $count; $i++) {
+            $offset += 8; // msg_id
+            $offset += 4; // seqno
+            $bodyLen = unpack('V', substr($payload, $offset, 4))[1];
+            $offset += 4;
+            $bodyBin = substr($payload, $offset, $bodyLen);
+            $offset += $bodyLen;
+
+            $bodyOffset = 0;
+            $body = TLDecoder::decodeObject($bodyBin, $bodyOffset);
+            $name = (string)($body['_'] ?? '');
+
+            if ($name === 'new_session_created') {
+                $salt = (int)($body['server_salt'] ?? $salt);
+                continue;
+            }
+            if (in_array(TLRegistry::id($name), $transientIds, true)) {
+                continue;
+            }
+            return ['message' => $body, 'salt' => $salt];
+        }
+        return ['message' => null, 'salt' => $salt];
+    }
+
+    /**
+     * Encrypted client message id: ≡ 0 (mod 4), strictly increasing —
+     * matching MadelineProto/TDLib (server rejects other residues with
+     * bad_msg_notification code 18). Seq stays odd for content messages.
      */
     protected function nextMessageId(): int
     {
-        $candidate = (((int)((microtime(true) + $this->session->serverTimeDelta) * 2**32)) & ~3) | 1;
+        $candidate = ((int)((microtime(true) + $this->session->serverTimeDelta) * 2**32)) & ~3;
         if ($candidate <= $this->lastMessageId) {
-            $candidate = $this->lastMessageId + 4; // keeps ≡ 1 (mod 4) while strictly increasing
+            $candidate = $this->lastMessageId + 4; // keeps ≡ 0 (mod 4) while strictly increasing
         }
         return $this->lastMessageId = $candidate;
+    }
+
+    /**
+     * seq_no for outgoing client content messages: odd and strictly
+     * increasing (2n+1). A content message with an even seq_no is rejected
+     * by the server with bad_msg_notification code 35.
+     */
+    protected function nextContentSeqNo(): int
+    {
+        return $this->contentCounter += 2;
     }
 
     public function lastSessionData(): SessionData

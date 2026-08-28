@@ -80,7 +80,7 @@ class PacketCodec
 
         // 3. Compute msg_key = SHA256(auth_key[88+x..120+x] + msgData)[0..16]
         $x = $toServer ? 0 : 8;
-        $msgKey = substr(hash('sha256', substr($authKey, 88 + $x, 32) . $msgData, true), 0, 16);
+        $msgKey = substr(hash('sha256', substr($authKey, 88 + $x, 32) . $msgData, true), 8, 16); // middle 16 bytes per MTProto 2.0 (matches MadelineProto/TDLib)
 
         // 4. Derive AES key and IV
         [$aesKey, $aesIv] = self::deriveKeys($authKey, $msgKey, x: $x);
@@ -122,7 +122,7 @@ class PacketCodec
         $decrypted = AesIge::decrypt($encrypted, $aesKey, $aesIv);
 
         // Verify msg_key = SHA256(auth_key[88+x..120+x] + decrypted)[0..16]
-        $calculatedMsgKey = substr(hash('sha256', substr($authKey, 88 + $x, 32) . $decrypted, true), 0, 16);
+        $calculatedMsgKey = substr(hash('sha256', substr($authKey, 88 + $x, 32) . $decrypted, true), 8, 16); // middle 16 bytes per MTProto 2.0 (matches MadelineProto/TDLib)
         if (!hash_equals($calculatedMsgKey, $msgKey)) {
             throw new RuntimeException("MTProto packet integrity check failed: msg_key mismatch.");
         }

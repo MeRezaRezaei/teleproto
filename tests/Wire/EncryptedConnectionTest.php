@@ -105,8 +105,8 @@ class EncryptedConnectionTest extends TestCase
 
         $req = $this->decryptFakeServerRequest($serverSock, $authKey);
         $this->assertSame(pack('V', 0xda9b0d0d), substr($req['payload'], 0, 4));
-        $this->assertSame(0, $req['seq_no']);           // single in-flight query
-        $this->assertSame(1, $req['message_id'] % 4);   // client content msg_id ≡ 1 (mod 4)
+        $this->assertSame(1, $req['seq_no']);           // first content message: odd seq_no (2n+1)
+        $this->assertSame(0, $req['message_id'] % 4);   // client msg_id ≡ 0 (mod 4) per MadelineProto/TDLib
         $this->assertGreaterThan(0, $req['message_id']);
 
         $offset = 0;
@@ -141,8 +141,8 @@ class EncryptedConnectionTest extends TestCase
         $second = $this->decryptFakeServerRequest($serverSock, $authKey);
         $this->assertSame(0, $first['server_salt']);
         $this->assertSame($newSalt, $second['server_salt']);
-        $this->assertSame(1, $first['message_id'] % 4);
-        $this->assertSame(1, $second['message_id'] % 4);
+        $this->assertSame(0, $first['message_id'] % 4);
+        $this->assertSame(0, $second['message_id'] % 4);
         $this->assertGreaterThan($first['message_id'], $second['message_id']); // strictly increasing
 
         $conn->close();

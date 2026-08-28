@@ -56,6 +56,7 @@ class TLRegistry
         'rpc_result req_msg_id:long result:Object = RpcResult',
         'rpc_error error_code:int error_message:string = RpcError',
         'bad_server_salt bad_msg_id:long bad_msg_seqno:int error_code:int new_server_salt:long = BadMsgNotification',
+        'bad_msg_notification bad_msg_id:long bad_msg_seqno:int error_code:int = BadMsgNotification',
         'gzip_packed packed_data:string = Object',
         'msgs_ack msg_ids:Vector long = MsgsAck',
         'new_session_created first_msg_id:long unique_id:long server_salt:long = NewSession',

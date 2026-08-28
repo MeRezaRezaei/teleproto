@@ -14,6 +14,7 @@ use MeRezaRezaei\Teleproto\MTProto\TL\TLSerializer;
 use MeRezaRezaei\Teleproto\MTProto\Transport\FrameCodec;
 use MeRezaRezaei\Teleproto\MTProto\Transport\StreamSocket;
 use RuntimeException;
+use Throwable;
 
 /**
  * Clean, stateless MTProto 2.0 Client.
@@ -156,6 +157,10 @@ class Client
     /**
      * Lazily handshakes (when the session has no 256-byte auth key) and opens
      * the encrypted connection exactly once; later live calls reuse it.
+     *
+     * A freshly generated auth key is only known to the server on the socket
+     * that created it until first use (server replies -404 otherwise), so the
+     * handshake's PlainConnection socket is promoted into the EncryptedConnection.
      */
     protected function ensureConnection(): EncryptedConnection
     {
@@ -164,18 +169,21 @@ class Client
         }
 
         [$host, $port] = $this->resolveHost();
-        return $this->conn = $this->connectEncrypted($this->ensureAuthKey($host, $port), $host, $port);
+        $socket = null;
+        $session = $this->ensureAuthKey($host, $port, $socket);
+        return $this->conn = $this->connectEncrypted($session, $host, $port, $socket);
     }
 
     /**
      * Test-only seam: forces a fresh handshake (if needed) to the given host
-     * and issues a single help.getNearestDc probe. Never touches cached state.
+     * and issues a single help.getNearestDc probe. Never caches a connection.
      *
      * @return array<string, mixed>
      */
     public function callToHost(string $host, int $port = 443): array
     {
-        $conn = $this->connectEncrypted($this->ensureAuthKey($host, $port), $host, $port);
+        $socket = null;
+        $conn = $this->connectEncrypted($this->ensureAuthKey($host, $port, $socket), $host, $port, $socket);
         try {
             return $conn->call('help.getNearestDc');
         } finally {
@@ -186,9 +194,11 @@ class Client
     /**
      * Runs the DH handshake via PlainConnection unless the session already
      * carries a full 256-byte auth key; returns the session to connect with
-     * (and stores a freshly generated one on the client).
+     * (and stores a freshly generated one on the client). When a handshake
+     * happens, its socket is stashed on $promotedSocket so the caller can
+     * continue encrypted traffic on the same connection the key was born on.
      */
-    protected function ensureAuthKey(string $host, int $port): SessionData
+    protected function ensureAuthKey(string $host, int $port, &$promotedSocket = null): SessionData
     {
         if ($this->session === null) {
             throw new RuntimeException('MTProto live call: no session');
@@ -199,18 +209,26 @@ class Client
 
         $plain = PlainConnection::connect($host, $port);
         try {
-            return $this->session = AuthKeyFactory::generate($plain, $this->session->dcId);
-        } finally {
+            $session = $this->session = AuthKeyFactory::generate($plain, $this->session->dcId);
+            $promotedSocket = $plain->socket; // keep the socket open: key is connection-bound until first use
+            return $session;
+        } catch (Throwable $e) {
             $plain->close();
+            throw $e;
         }
     }
 
     /**
      * Opens the encrypted connection, carrying this client's apiId into
      * initConnection (EncryptedConnection::connect() cannot take an apiId).
+     * When $promotedSocket is given (the socket the auth key was generated
+     * on), it is reused instead of dialing fresh.
      */
-    protected function connectEncrypted(SessionData $session, string $host, int $port): EncryptedConnection
+    protected function connectEncrypted(SessionData $session, string $host, int $port, $promotedSocket = null): EncryptedConnection
     {
+        if ($promotedSocket !== null) {
+            return new EncryptedConnection($session, $promotedSocket, $this->apiId);
+        }
         try {
             $socket = StreamSocket::createConnection($host, $port);
             FrameCodec::writeInit($socket);
