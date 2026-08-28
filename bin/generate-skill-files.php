@@ -3,9 +3,13 @@
 declare(strict_types=1);
 
 // Generates skills/telegram-methods/<method>.md — one deterministic AI-skill
-// reference page per curated method (config/curated-methods.json; falls back
-// to the pinned seed list from the 2026-08-28 method-layer plan when the
-// curated file is not present yet — it is owned by the parallel builders task).
+// reference page per curated method from config/curated-methods.json.
+//
+// The curated list is the single source of truth, shared with
+// bin/generate-method-builders.php: a missing or malformed file is FATAL
+// (a silent fallback could mask a lost config and drift the generated files).
+// The PINNED_SEED list that bootstrapped the curated config before it existed
+// was removed 2026-08-28; it remains recoverable from git history.
 //
 // Run: php bin/generate-skill-files.php
 
@@ -15,34 +19,20 @@ use MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorCatalog;
 use MeRezaRezaei\Teleproto\Schema\MethodRegistry;
 use MeRezaRezaei\Teleproto\Schema\TelegramMethod;
 
-/** Pinned seed from the plan (kept in sync with config/curated-methods.json). */
-const PINNED_SEED = [
-    'mtproto' => [
-        'messages.sendMessage', 'messages.getHistory', 'messages.search', 'messages.readHistory',
-        'messages.sendReaction', 'messages.getDialogs', 'messages.forwardMessages', 'messages.deleteMessages',
-        'users.getUsers', 'users.getFullUser', 'contacts.getContacts', 'contacts.importContacts',
-        'contacts.search', 'account.getPassword', 'auth.sendCode', 'auth.signIn', 'auth.checkPassword',
-        'auth.exportLoginToken', 'auth.importBotAuthorization', 'help.getNearestDc',
-    ],
-    'bot-http' => [
-        'getMe', 'sendMessage', 'sendPhoto', 'sendDocument', 'sendMediaGroup',
-        'editMessageText', 'deleteMessage', 'answerCallbackQuery', 'setWebhook', 'getUpdates',
-    ],
-];
-
 $root = dirname(__DIR__);
 $outDir = $root . '/skills/telegram-methods';
 
 $curatedPath = $root . '/config/curated-methods.json';
-if (is_file($curatedPath)) {
-    $curated = json_decode((string) file_get_contents($curatedPath), true);
-    if (! is_array($curated) || ! is_array($curated['mtproto'] ?? null) || ! is_array($curated['bot-http'] ?? null)) {
-        fwrite(STDERR, "Malformed curated list [{$curatedPath}].\n");
-        exit(1);
-    }
-} else {
-    $curated = PINNED_SEED;
-    fwrite(STDERR, "Note: config/curated-methods.json not found; using the pinned seed list.\n");
+$raw = file_get_contents($curatedPath);
+if ($raw === false) {
+    fwrite(STDERR, "curated-methods.json is missing at [{$curatedPath}].\n");
+    exit(1);
+}
+
+$curated = json_decode($raw, true);
+if (! is_array($curated) || ! is_array($curated['mtproto'] ?? null) || ! is_array($curated['bot-http'] ?? null)) {
+    fwrite(STDERR, "Malformed curated list [{$curatedPath}]: expected {\"mtproto\": [...], \"bot-http\": [...]}.\n");
+    exit(1);
 }
 
 $cell = static function (string $text): string {
@@ -155,14 +145,9 @@ $render = static function (TelegramMethod $m) use ($cell, $renderUsage): string 
             if ($entry === null && str_contains($error, '%d')) {
                 // Template errors (e.g. SLOWMODE_WAIT_%d) only match the catalog
                 // as wire messages; probe with a representative sample value.
-                // Some official templates carry more %d specifiers than the
-                // message (multi-value descriptions) — catalog lookup() then
-                // throws ArgumentCountError; treat those as undocumented.
-                try {
-                    $entry = RpcErrorCatalog::lookup(str_replace('%d', '30', $error));
-                } catch (ArgumentCountError) {
-                    $entry = null;
-                }
+                // lookup() fills every %d slot, so multi-placeholder
+                // descriptions (ALLOW_PAYMENT_REQUIRED_%d) render fine too.
+                $entry = RpcErrorCatalog::lookup(str_replace('%d', '30', $error));
             }
             $lines[] = $entry === null
                 ? '- `' . $error . '`'

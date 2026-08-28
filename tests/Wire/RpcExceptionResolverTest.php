@@ -105,6 +105,18 @@ class RpcExceptionResolverTest extends TestCase
         }
     }
 
+    public function testMultiPlaceholderTemplateDescriptionRendersWithoutArgumentCountError(): void
+    {
+        // ALLOW_PAYMENT_REQUIRED_%d's official description references the value
+        // twice ("charges %d ... smaller than %d"): rendering must fill every
+        // slot with the wire value instead of throwing ArgumentCountError.
+        $e = RpcExceptionResolver::resolve('ALLOW_PAYMENT_REQUIRED_5', 400);
+        $this->assertInstanceOf(RpcErrorException::class, $e);
+        $this->assertSame('ALLOW_PAYMENT_REQUIRED_5', $e->rpcErrorMessage);
+        $this->assertStringContainsString('charges 5', $e->getMessage());
+        $this->assertStringContainsString('smaller than 5', $e->getMessage());
+    }
+
     public function testParameterizedMatchesWorkWithoutRegex(): void
     {
         // sanity: numeric template does hit the catalog

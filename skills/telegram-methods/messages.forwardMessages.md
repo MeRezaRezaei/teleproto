@@ -40,7 +40,7 @@ Updates
 ## Errors
 
 - `ALLOW_PAYMENT_REQUIRED` — This peer only accepts [paid messages &raquo;](https://core.telegram.org/api/paid-messages): this error is only emitted for older layers without paid messages support, so the client must be updated in order to use paid messages.  .
-- `ALLOW_PAYMENT_REQUIRED_%d`
+- `ALLOW_PAYMENT_REQUIRED_%d` — This peer charges 30 [Telegram Stars](https://core.telegram.org/api/stars) per message, but the `allow_paid_stars` was not set or its value is smaller than 30.
 - `AUTH_KEY_UNREGISTERED` — The specified authorization key is not registered in the system (for example, a PFS temporary key has expired).
 - `BROADCAST_PUBLIC_VOTERS_FORBIDDEN` — You can't forward polls with public voters.
 - `BUSINESS_CONNECTION_NOT_ALLOWED` — This method was invoked over a business connection using [invokeWithBusinessConnection](https://core.telegram.org/api/business#connected-bots), but either (1) we're a user, and users cannot invoke methods over a business connection; (2) we're a bot, but business mode was disabled in @botfather or (3); we're a bot, but this method cannot be invoked over a business connection.

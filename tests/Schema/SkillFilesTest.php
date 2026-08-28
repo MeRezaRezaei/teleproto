@@ -57,6 +57,19 @@ class SkillFilesTest extends TestCase
         $this->assertLessThan($peerId, $chatAdmin);
     }
 
+    public function testMultiPlaceholderTemplateErrorRendersRealDescription(): void
+    {
+        // ALLOW_PAYMENT_REQUIRED_%d's description references the value twice;
+        // the generator must render it (sample 30), not fall back to the bare
+        // template name (the pre-2026-08-28 ArgumentCountError guard did).
+        $md = (string) file_get_contents(self::SKILL_DIR . '/messages.forwardMessages.md');
+        $this->assertStringContainsString(
+            '`ALLOW_PAYMENT_REQUIRED_%d` — This peer charges 30 [Telegram Stars]',
+            $md
+        );
+        $this->assertStringContainsString('smaller than 30', $md);
+    }
+
     public function testUsageExampleChainsSettersAndDispatchesTheRequest(): void
     {
         $md = (string) file_get_contents(self::SKILL_DIR . '/messages.sendMessage.md');

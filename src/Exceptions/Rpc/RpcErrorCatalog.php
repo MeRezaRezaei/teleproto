@@ -2360,7 +2360,11 @@ final class RpcErrorCatalog
         foreach (self::templates() as $template => $descTemplate) {
             if (self::templateMatches($template, $msg)) {
                 $value = self::templateValue($template, $msg);
-                return [$template, str_contains($descTemplate, '%d') ? sprintf($descTemplate, $value) : $descTemplate];
+                // Some official descriptions reference the value more than once
+                // (e.g. ALLOW_PAYMENT_REQUIRED_%d: "charges %d ... smaller than
+                // %d") — fill every slot or sprintf throws ArgumentCountError.
+                $slots = substr_count($descTemplate, '%d');
+                return [$template, $slots > 0 ? sprintf($descTemplate, ...array_fill(0, $slots, $value)) : $descTemplate];
             }
         }
         return null;

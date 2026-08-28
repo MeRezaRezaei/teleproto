@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\Services;
 
+use Illuminate\Http\Client\Factory as HttpFactory;
 use MeRezaRezaei\Teleproto\MTProto\Client as MTProtoClient;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
+use MeRezaRezaei\Teleproto\Schema\MethodRegistry;
 use RuntimeException;
 
 /**
@@ -14,6 +16,8 @@ use RuntimeException;
  */
 class TeleprotoClient
 {
+    private ?HttpFactory $http = null;
+
     public function __construct(
         public int $defaultApiId = 0,
         public string $defaultApiHash = '',
@@ -21,8 +25,32 @@ class TeleprotoClient
         public ?array $defaultProxyConfig = null,
         public ?string $defaultUserSession = null,
         public ?string $defaultBotSession = null,
-        public int $defaultDcId = 2
-    ) {}
+        public int $defaultDcId = 2,
+        ?HttpFactory $http = null
+    ) {
+        $this->http = $http;
+    }
+
+    /**
+     * Dispatch a generated builder request (['_' => method, ...params]) to the
+     * transport the packaged schema catalog assigns to the method: 'mtproto'
+     * → user() scope, 'bot-http' → bot() client.
+     *
+     * @param array<string, mixed> $request
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException when the method exists in neither schema artifact
+     */
+    public function dispatch(array $request): array
+    {
+        $name = (string) ($request['_'] ?? '');
+        $api = MethodRegistry::apiOf($name);
+        unset($request['_']);
+
+        return $api === 'mtproto'
+            ? $this->user()->call($name, $request)
+            : $this->bot()->call($name, $request);
+    }
 
     /**
      * Create or bind an MTProto user account session.
@@ -123,7 +151,7 @@ class TeleprotoClient
             throw new RuntimeException("Telegram Bot Token is required. Pass it to bot() or configure TELEGRAM_BOT_TOKEN in .env.");
         }
 
-        return new BotClient($finalToken, $proxyConfig ?? $this->defaultProxyConfig);
+        return new BotClient($finalToken, $proxyConfig ?? $this->defaultProxyConfig, http: $this->http);
     }
 
     /**
