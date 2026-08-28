@@ -7,7 +7,7 @@ namespace MeRezaRezaei\Teleproto\MTProto;
 use MeRezaRezaei\Teleproto\MTProto\Connection\EncryptedConnection;
 use MeRezaRezaei\Teleproto\MTProto\Connection\PlainConnection;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\AesIge;
-use MeRezaRezaRezaei\Teleproto\MTProto\Crypto\AuthKeyFactory;
+use MeRezaRezaei\Teleproto\MTProto\Crypto\AuthKeyFactory;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\PasswordCalculator;
 use MeRezaRezaei\Teleproto\MTProto\TL\TLSerializer;
 use MeRezaRezaei\Teleproto\MTProto\Transport\FrameCodec;
