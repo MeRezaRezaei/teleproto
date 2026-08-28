@@ -127,6 +127,10 @@ class TLRegistry
         foreach (self::SCHEMA as $line) {
             self::register($line);
         }
+        // Full constructor closure for the documented scope methods (layer 227)
+        foreach (\MeRezaRezaei\Teleproto\MTProto\TL\Schema\UserScopeSchema::LINES as $line) {
+            self::register($line);
+        }
     }
 
     public static function register(string $canonicalLine): void

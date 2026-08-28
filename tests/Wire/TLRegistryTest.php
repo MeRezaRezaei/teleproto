@@ -114,4 +114,22 @@ class TLRegistryTest extends TestCase
         $this->assertSame(0x1cb5c415, TLRegistry::VECTOR);
         $this->assertSame(TLRegistry::VECTOR, TLRegistry::crc32Canonical('vector t:Type # [ t ] = Vector t'));
     }
+
+    public function testUserScopeSchemaRegistersResponseConstructors(): void
+    {
+        // Presence checks for response-side constructors proven live against
+        // production DCs (getHistory/getDialogs/sendMessage/getState paths).
+        foreach ([
+            'updateMessageID', 'updates.state', 'message', 'dialog', 'userFull',
+            'messages.messagesSlice', 'updateShortSentMessage', 'updatesCombined',
+            'contacts.contacts', 'updateNewMessage', 'messageEntityTextUrl',
+        ] as $name) {
+            try {
+                TLRegistry::id($name);
+            } catch (\InvalidArgumentException) {
+                $this->fail("{$name} must be registered for the documented user scope");
+            }
+        }
+        $this->assertSame(0x4e90bfd6, TLRegistry::id('updateMessageID'));
+    }
 }
