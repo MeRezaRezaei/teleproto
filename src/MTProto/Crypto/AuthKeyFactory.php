@@ -120,23 +120,13 @@ class AuthKeyFactory
             throw new RuntimeException('AuthKeyFactory: server fingerprints do not include a bundled public key');
         }
 
-        // --- RSA payload: p_q_inner_data padded to 192 bytes, PKCS1 v1.5
-        $inner = TLEncoder::encodeObject('p_q_inner_data', [
+        // --- RSA-PAD encryption of p_q_inner_data_dc (https://core.telegram.org/mtproto/protocols#rsa-pad)
+        $inner = TLEncoder::encodeObject('p_q_inner_data_dc', [
             'pq' => $resPqObj['pq'], 'p' => $p, 'q' => $q,
             'nonce' => $nonce, 'server_nonce' => $serverNonce, 'new_nonce' => $newNonce,
+            'dc' => $dcId,
         ]);
-        if (strlen($inner) > 192) {
-            throw new RuntimeException('AuthKeyFactory: p_q_inner_data exceeds 192 bytes');
-        }
-        $inner .= random_bytes(192 - strlen($inner));
-
-        $loaded = PublicKeyLoader::load($pem);
-        if (!$loaded instanceof \phpseclib3\Crypt\RSA\PublicKey) {
-            throw new RuntimeException('AuthKeyFactory: bundled key is not an RSA public key');
-        }
-        /** @var \phpseclib3\Crypt\RSA\PublicKey $rsa */
-        $rsa = $loaded->withPadding(RSA::ENCRYPTION_PKCS1 | RSA::SIGNATURE_PKCS1);
-        $encryptedInner = $rsa->encrypt($inner);
+        $encryptedInner = self::rsaPadEncrypt($pem, $inner);
 
         // --- Step 2: req_DH_params
         $reqDh = TLEncoder::encodeObject('req_DH_params', [
@@ -246,6 +236,45 @@ class AuthKeyFactory
         }
 
         return $object;
+    }
+
+    /**
+     * RSA-PAD encryption for the DH handshake inner data
+     * (https://core.telegram.org/mtproto/protocols#rsa-pad):
+     *
+     *   data_with_padding  = inner_data + random bytes, exactly 192 bytes
+     *   data_pad_reversed  = strrev(data_with_padding)
+     *   data_with_hash     = data_pad_reversed + SHA256(temp_key + data_with_padding)
+     *   aes_encrypted      = AES-IGE(data_with_hash, temp_key, zero IV)
+     *   payload            = (temp_key ^ SHA256(aes_encrypted)) + aes_encrypted   // 256 bytes
+     *   ciphertext         = payload^e mod n   (raw RSA, retried while payload >= n)
+     */
+    public static function rsaPadEncrypt(string $pem, string $innerData): string
+    {
+        if (strlen($innerData) > 144) {
+            throw new RuntimeException('AuthKeyFactory: p_q_inner_data exceeds 144 bytes');
+        }
+
+        $components = \phpseclib3\Crypt\RSA\Formats\Keys\PKCS1::load(self::pkcs1DerOf($pem));
+        $n = $components['modulus'];
+        $e = $components['publicExponent'];
+
+        $dataWithPadding = $innerData . random_bytes(192 - strlen($innerData));
+        $reversed = strrev($dataWithPadding);
+
+        for ($attempt = 0; $attempt < 16; $attempt++) {
+            $tempKey = random_bytes(32);
+            $dataWithHash = $reversed . hash('sha256', $tempKey . $dataWithPadding, true);
+            $aesEncrypted = AesIge::encrypt($dataWithHash, $tempKey, str_repeat("\x00", 32));
+            $payload = ($tempKey ^ hash('sha256', $aesEncrypted, true)) . $aesEncrypted;
+
+            $m = new BigInteger($payload, 256);
+            if ($m->compare($n) < 0) {
+                return str_pad($m->powMod($e, $n)->toBytes(), 256, "\x00", STR_PAD_LEFT);
+            }
+        }
+
+        throw new RuntimeException('AuthKeyFactory: RSA-PAD failed to generate payload < n within 16 attempts');
     }
 
     /**

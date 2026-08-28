@@ -36,6 +36,8 @@ class TLRegistry
         'req_pq_multi nonce:int128 = ResPQ',
         'resPQ nonce:int128 server_nonce:int128 pq:string server_public_key_fingerprints:Vector long = ResPQ',
         'p_q_inner_data pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 = P_Q_inner_data',
+        'p_q_inner_data_dc pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 dc:int = P_Q_inner_data',
+        'p_q_inner_data_temp_dc pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 dc:int expires_in:int = P_Q_inner_data',
         'req_DH_params nonce:int128 server_nonce:int128 p:string q:string public_key_fingerprint:long encrypted_data:string = Server_DH_Params',
         'server_DH_params_ok nonce:int128 server_nonce:int128 encrypted_answer:string = Server_DH_Params',
         'server_DH_params_fail nonce:int128 server_nonce:int128 new_nonce_hash:int128 = Server_DH_Params',

@@ -25,6 +25,10 @@ class TLRegistryTest extends TestCase
             'req_pq_multi' => 0xbe7e8ef1,
             'resPQ' => 0x05162463,
             'p_q_inner_data' => 0x83c95aec,
+            // _dc variants required by production servers since the PFC schema
+            // change (verified against MadelineProto layer-227 schema):
+            'p_q_inner_data_dc' => 0xa9f55f95,
+            'p_q_inner_data_temp_dc' => 0x56fddf88,
             'req_DH_params' => 0xd712e4be,
             'server_DH_params_ok' => 0xd0e8075c,
             'server_DH_inner_data' => 0xb5890dba,
