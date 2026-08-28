@@ -139,7 +139,7 @@ class TLRegistry
         'chatEmpty#29562865 id:long = Chat',
         'channelForbidden#17d493d5 flags:# broadcast:flags.5?true megagroup:flags.8?true monoforum:flags.10?true id:long access_hash:long title:string until_date:flags.16?int = Chat',
         'documentAttributeImageSize#6c37c15c w:int h:int = DocumentAttribute',
-        'inputDocumentFileLocation#f5bb5e8e id:long access_hash:long file_reference:bytes thumb_size:string = InputFileLocation',
+        'inputDocumentFileLocation#bad07584 id:long access_hash:long file_reference:bytes thumb_size:string = InputFileLocation',
         'inputPhotoFileLocation#40181ffe id:long access_hash:long file_reference:bytes thumb_size:string = InputPhotoLocation',
         'storage.fileUnknown#aa963b05 = storage.FileType',
         'storage.filePartial#40bc6f52 = storage.FileType',

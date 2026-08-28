@@ -38,7 +38,7 @@ class TLDecoder
         $name = TLRegistry::nameOf($id);
         if ($name === null) {
             $parent = $contextTypes['_parent'] ?? '?';
-            throw new RuntimeException(sprintf('TLDecoder: unknown constructor id 0x%08x while decoding inside <%s> at offset %d', $id, is_string($parent) ? $parent : '?', $offset - 4));
+            throw new RuntimeException(sprintf('TLDecoder: unknown constructor id 0x%08x while decoding inside <%s> at offset %d', $id, $parent, $offset - 4));
         }
 
         $result = ['_' => $name];
