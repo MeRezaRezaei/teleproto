@@ -25,17 +25,46 @@ use MeRezaRezaei\Teleproto\Exceptions\Rpc\SessionPasswordNeededException;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\Services\TeleprotoAuthService;
 
-$apiId = (int) (getenv('TG_API_ID') ?: 0);
-$apiHash = (string) (getenv('TG_API_HASH') ?: '');
-if ($apiId === 0 || $apiHash === '') {
-    fwrite(STDERR, "Set TG_API_ID and TG_API_HASH env vars (from https://my.telegram.org).\n");
-    exit(1);
+function ask(string $prompt, string $default = ''): string
+{
+    if ($default !== '') {
+        $prompt = rtrim($prompt) . " [{$default}]: ";
+    }
+    echo $prompt;
+    $input = trim((string) fgets(STDIN));
+    return $input !== '' ? $input : $default;
 }
 
-function ask(string $prompt): string
+function loadEnvFile(string $path): array
 {
-    echo $prompt;
-    return trim((string) fgets(STDIN));
+    if (!file_exists($path)) {
+        return [];
+    }
+    $vars = [];
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            continue;
+        }
+        if (str_contains($line, '=')) {
+            [$k, $v] = explode('=', $line, 2);
+            $vars[trim($k)] = trim($v, " \t\n\r\0\x0B\"'");
+        }
+    }
+    return $vars;
+}
+
+$envVars = loadEnvFile(__DIR__ . '/../.env');
+
+$envApiId = (int) ($envVars['TELEGRAM_API_ID'] ?? getenv('TG_API_ID') ?: 0);
+$envApiHash = (string) ($envVars['TELEGRAM_API_HASH'] ?? getenv('TG_API_HASH') ?: '');
+
+$apiId = (int) ask('Telegram API ID', $envApiId > 0 ? (string) $envApiId : '');
+$apiHash = ask('Telegram API Hash', $envApiHash);
+
+if ($apiId === 0 || $apiHash === '') {
+    fwrite(STDERR, "Telegram API ID and Hash are required. Obtain them from https://my.telegram.org.\n");
+    exit(1);
 }
 
 function askSecret(string $prompt): string
@@ -52,6 +81,18 @@ function askSecret(string $prompt): string
     return $value;
 }
 
+function saveToEnv(string $key, string $value): void
+{
+    $envPath = __DIR__ . '/../.env';
+    $envContent = file_exists($envPath) ? (string) file_get_contents($envPath) : '';
+    if (preg_match("/^{$key}=.*/m", $envContent)) {
+        $envContent = preg_replace("/^{$key}=.*/m", "{$key}=\"{$value}\"", $envContent);
+    } else {
+        $envContent .= (rtrim($envContent) !== '' ? "\n" : '') . "{$key}=\"{$value}\"\n";
+    }
+    file_put_contents($envPath, $envContent);
+}
+
 /** @param array<string, mixed> $authorization */
 function celebrate(array $authorization, string $sessionString, string $label): void
 {
@@ -64,8 +105,15 @@ function celebrate(array $authorization, string $sessionString, string $label): 
         (string)($user['username'] ?? '-'),
         (string)($user['id'] ?? '?')
     );
-    echo "\nSession string (store encrypted; e.g. TELEGRAM_" . strtoupper(str_contains($label, 'Bot') ? 'BOT' : 'USER') . "_SESSION):\n";
+    $envKey = 'TELEGRAM_' . strtoupper(str_contains($label, 'Bot') ? 'BOT' : 'USER') . '_SESSION';
+    echo "\nExported session string:\n";
     echo $sessionString . "\n\n";
+
+    $save = ask("Save session to .env as {$envKey}? (y/n)", 'y');
+    if (strtolower($save) === 'y' || strtolower($save) === 'yes') {
+        saveToEnv($envKey, $sessionString);
+        echo "Saved to .env as {$envKey}.\n";
+    }
 }
 
 function whoami(\MeRezaRezaei\Teleproto\Services\UserAccountScope $scope): array

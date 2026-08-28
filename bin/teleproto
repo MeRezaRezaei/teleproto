@@ -1,0 +1,60 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Teleproto CLI - Standalone Developer Tool for Teleproto.
+ *
+ * Usage:
+ *   ./bin/teleproto login   - Interactive MTProto Login Wizard (Phone, QR, Bot)
+ *   ./bin/teleproto doctor  - Test live MTProto connection to Telegram DCs
+ *   ./bin/teleproto poll    - Listen for incoming bot updates via long-polling
+ */
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$action = strtolower((string) ($argv[1] ?? 'login'));
+
+switch ($action) {
+    case 'login':
+        require __DIR__ . '/../examples/live-login.php';
+        break;
+
+    case 'doctor':
+        require __DIR__ . '/../examples/live-doctor.php';
+        break;
+
+    case 'poll':
+        $env = file_exists(__DIR__ . '/../.env') ? parse_ini_file(__DIR__ . '/../.env') : [];
+        $token = $env['TELEGRAM_BOT_TOKEN'] ?? getenv('TELEGRAM_BOT_TOKEN');
+        if (!$token) {
+            fwrite(STDERR, "TELEGRAM_BOT_TOKEN is required in .env or environment to poll.\n");
+            exit(1);
+        }
+        $bot = new \MeRezaRezaei\Teleproto\Services\BotClient($token);
+        $poller = new \MeRezaRezaei\Teleproto\Services\UpdatePollerService();
+        echo "Teleproto Poller started. Listening for updates (Ctrl+C to stop)...\n";
+        $poller->pollBot($bot, onUpdate: function (array $update) {
+            $id = $update['update_id'] ?? 0;
+            $msg = $update['message']['text'] ?? '[non-text update]';
+            $from = $update['message']['from']['first_name'] ?? 'User';
+            echo "[#{$id}] {$from}: {$msg}\n";
+        });
+        break;
+
+    case 'help':
+    case '--help':
+    case '-h':
+    default:
+        echo <<<HELP
+Teleproto CLI
+
+Available commands:
+  ./bin/teleproto login    Interactive MTProto Login (User Phone, QR Link, Bot)
+  ./bin/teleproto doctor   Test MTProto connection to Telegram DC2
+  ./bin/teleproto poll     Run local long-polling for Telegram bot
+
+HELP;
+        break;
+}
