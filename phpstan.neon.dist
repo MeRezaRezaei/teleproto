@@ -1,3 +1,6 @@
+includes:
+    - vendor/spaze/phpstan-disallowed-calls/extension.neon
+
 parameters:
     level: 5
     bootstrapFiles:
@@ -6,3 +9,11 @@ parameters:
         - src
     excludePaths:
         - src/MTProto/resources
+    filesRootDir: %rootDir%/../../..
+    disallowedFunctionCalls:
+        -
+            function: 'preg_*()'
+            message: 'src/ is regex-free by spec 2026-08-28 §A — use sscanf/string functions/the TL tokenizer'
+            allowIn:
+                - bin/*
+                - examples/*
