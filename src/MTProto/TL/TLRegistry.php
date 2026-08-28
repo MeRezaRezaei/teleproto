@@ -177,6 +177,31 @@ class TLRegistry
         foreach (\MeRezaRezaei\Teleproto\MTProto\TL\Schema\UserScopeSchema::LINES as $line) {
             self::register($line);
         }
+
+        // Full v227 mirror (types + functions, explicit ids) — loaded AFTER the
+        // curated SCHEMA so hand-listed lines win on id conflicts; kills
+        // layer-drift decode misalignment wholesale (found live: stale
+        // documentAttributeVideo fields overrunning into string bytes).
+        foreach (['api_full.tl', 'mtproto_full.tl'] as $file) {
+            $path = __DIR__ . '/../../schema/sources/' . $file;
+            if (!is_file($path)) {
+                continue;
+            }
+            foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $raw) {
+                $line = trim($raw, " \t;");
+                if ($line === '' || $line[0] === '/' || str_starts_with($line, '---')) {
+                    continue;
+                }
+                if (!str_contains($line, '#')) {
+                    continue; // id-less cosmetic lines: curated SCHEMA owns them
+                }
+                try {
+                    self::register($line);
+                } catch (\Throwable) {
+                    continue; // generic wrapper lines ({X:Type}) are hand-built at call sites
+                }
+            }
+        }
     }
 
     public static function register(string $canonicalLine): void

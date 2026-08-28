@@ -37,7 +37,8 @@ class TLDecoder
 
         $name = TLRegistry::nameOf($id);
         if ($name === null) {
-            throw new RuntimeException(sprintf('TLDecoder: unknown constructor id 0x%08x', $id));
+            $parent = $contextTypes['_parent'] ?? '?';
+            throw new RuntimeException(sprintf('TLDecoder: unknown constructor id 0x%08x while decoding inside <%s> at offset %d', $id, is_string($parent) ? $parent : '?', $offset - 4));
         }
 
         $result = ['_' => $name];
@@ -54,17 +55,17 @@ class TLDecoder
                 if (($flagWords[$field['flagWord']] & (1 << $field['bit'])) === 0) {
                     continue; // bit clear: field absent from the wire
                 }
-                $result[$fieldName] = self::decodeValue($fieldType, $data, $offset);
+                $result[$fieldName] = self::decodeValue($fieldType, $data, $offset, $name);
                 continue;
             }
-            $result[$fieldName] = self::decodeValue($fieldType, $data, $offset);
+            $result[$fieldName] = self::decodeValue($fieldType, $data, $offset, $name);
         }
         return $result;
     }
 
-    public static function decodeValue(string $type, string $data, int &$offset): mixed
+    public static function decodeValue(string $type, string $data, int &$offset, ?string $parent = null): mixed
     {
-        return match (true) {
+        $match = match (true) {
             $type === 'int' => TLSerializer::unpackInt($data, $offset),
             $type === 'long' => TLSerializer::unpackLong($data, $offset),
             $type === 'true' => true, // presence was encoded by the flag bit alone
@@ -74,10 +75,11 @@ class TLDecoder
             str_starts_with($type, 'Vector<') => TLSerializer::unpackVector(
                 $data,
                 $offset,
-                fn(string $d, int &$o) => self::decodeValue(substr($type, 7, -1), $d, $o)
+                fn(string $d, int &$o) => self::decodeValue(substr($type, 7, -1), $d, $o, $parent)
             ),
-            default => self::decodeObject($data, $offset), // X / !X / Object / named type
+            default => self::decodeObject($data, $offset, $parent === null ? [] : ['_parent' => $parent]), // X / !X / Object / named type
         };
+        return $match;
     }
 
     protected static function rawBytes(string $data, int &$offset, int $len): string
