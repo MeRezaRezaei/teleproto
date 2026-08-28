@@ -8,6 +8,6 @@
 - Closes #
 
 ### Checklist
-- [ ] Tests added / updated and all tests passing (`./vendor/bin/phpunit`)
-- [ ] Coding standard checks verified
+- [ ] Tests added / updated and all tests passing (`composer test`)
+- [ ] Static analysis passes (`composer analyse`)
 - [ ] Documentation updated where relevant

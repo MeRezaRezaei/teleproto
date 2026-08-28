@@ -2,7 +2,7 @@
 
 # Teleproto ⚡
 
-**Unified Telegram Multi-Protocol Engine for PHP & Laravel**
+**Telegram power with almost zero friction — for PHP & Laravel.**
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/MeRezaRezaei/teleproto/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/MeRezaRezaei/teleproto/actions)
 [![PHP Version](https://img.shields.io/badge/PHP-%3E%3D%208.2-8892BF.svg?style=flat-square)](https://php.net/)
@@ -13,230 +13,92 @@
 
 ---
 
-**Teleproto** is a high-performance, stateless Telegram protocol engine for PHP and Laravel. It unifies **MTProto 2.0 User Sessions**, **Telegram Bot API**, **Mini App HMAC Authentication**, **Telegram Passport KYC Decryption**, and **Storage Streaming** in a single low-level library with zero bloat.
+You need to send a message, verify a Mini App, decrypt Passport KYC, run a bot, fetch a file — **occasionally**, inside a Laravel app that is about something else. You should not have to adopt a Telegram framework to do it.
+
+- **One composer package, not a framework.** Native MTProto 2.0, Bot API (HTTP), Mini App HMAC auth, Passport KYC decryption, and Storage-backed file streaming — no event loop, no daemon, no IPC.
+- **Stateless session strings.** Auth lives in a portable base64 string (`.env` or your DB). No session files, no SQLite, no disk locks. The handshake happened once, ever — it is inside the session string.
+- **Typed errors and AI-shaped docs.** Every RPC error resolves to a typed exception carrying Telegram's official error-database hint, and the `skills/` directory gives AI agents a per-method reference they can drive the package from.
 
 ---
 
-## 📦 Installation
+## The friction we remove
 
-```bash
-composer require merezarezaei/teleproto
-```
+| | **teleproto** | MadelineProto | TDLib |
+| :--- | :--- | :--- | :--- |
+| **Footprint** | One composer package | Full amphp-based framework | Native C++ library + bindings |
+| **Session model** | Stateless string in `.env`/DB | Session files on disk | Own local database |
+| **Daemon / event loop** | None — plain blocking calls | amphp event loop | TDLib client process |
+| **Learning curve** | Facade + `.env` | Event loop, wrappers, IPC | Auth state machine, build steps |
+| **Login wizard** | `php artisan teleproto:login` (phone / QR / 2FA / bot) | Multi-step manual setup | Implement the flows yourself |
+| **AI-skill docs** | Generated per-method reference files | — | — |
 
-### Publish Configuration
-```bash
-php artisan vendor:publish --tag="teleproto-config"
-```
-
-Configure `.env`:
-```env
-# Optional: For HTTP Bot API calls
-TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-
-# Required for MTProto 2.0 (Both User & Bot high-speed binary connections)
-# Obtain from https://my.telegram.org (API development tools)
-TELEGRAM_API_ID=12345678
-TELEGRAM_API_HASH="your_api_hash_here"
-
-# Automatically configured by running `php artisan teleproto:login`
-TELEGRAM_USER_SESSION="2:AQAD...:12345678:0"
-TELEGRAM_BOT_SESSION="2:AQAD...:98765432:0"
-```
+If you are building a Telegram *client*, MadelineProto and TDLib are the right tools. If you need Telegram call X from your Laravel app tonight, that is the gap teleproto fills.
 
 ---
 
-## ⚡ Interactive MTProto Login Wizard (`teleproto:login`)
+## What you can do today
 
-Teleproto includes an interactive Artisan CLI command to authenticate User and Bot sessions over MTProto with zero boilerplate:
+### Bot on the HTTP Bot API
 
-```bash
-php artisan teleproto:login
-```
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Teleproto MTProto 2.0 Authentication Wizard                 │
-└─────────────────────────────────────────────────────────────┘
-Select Authentication Method:
- [phone] 📱 User Account: Phone Number & Verification Code
- [qr]    📷 User Account: Scan QR Code with Telegram App
- [bot]   🤖 Bot Account: High-Speed MTProto Bot Token
-```
-
-- **Phone Login**: Prompts for phone, sends login code via Telegram/SMS, handles 2FA Cloud Password (`account.getPassword` + SRP-6a) automatically, and writes `TELEGRAM_USER_SESSION` to `.env`.
-- **QR Code Login**: Generates an ANSI terminal QR code (`tg://login?token=...`) ready to scan directly from your Telegram mobile app (`Settings -> Devices -> Link Desktop Device`).
-- **Bot MTProto Login**: Authenticates your bot token on Telegram's core Data Centers via `auth.importBotAuthorization` and writes `TELEGRAM_BOT_SESSION` to `.env`.
-
-Once configured in `.env`, calling `TP::user()` or `TP::botMtproto()` requires **zero parameters**:
 ```php
 use MeRezaRezaei\Teleproto\Facades\TP;
 
-// Automatically connects using TELEGRAM_USER_SESSION from .env:
-TP::user()->sendMessage('@channel', 'Hello from zero-config MTProto!');
-
-// Automatically connects using TELEGRAM_BOT_SESSION from .env:
-TP::botMtproto()->sendMessage('@channel', 'Bot broadcast over MTProto!');
-```
-
----
-
-## 💡 Why Teleproto? (Architecture & MTProto vs Bot API)
-
-| Feature | Standard Bot API (HTTP) | Teleproto Native MTProto 2.0 (Binary) |
-| :--- | :--- | :--- |
-| **Transport** | JSON over HTTP/HTTPS | Binary TL over raw TCP Sockets (Layer 227+) |
-| **Speed & Latency** | High (HTTP handshake + JSON parse) | **Ultra-Low (<5ms)** |
-| **Bot Support** | ✅ Yes | ✅ **Yes** (via `auth.importBotAuthorization`) |
-| **User Support** | ❌ No | ✅ **Yes** (Full User MTProto Account) |
-| **Max File Upload** | 50 MB | **Up to 4,000 MB (4 GB)** |
-| **State Management** | None (Stateless) | **100% Stateless Session String** (Zero disk locks) |
-
-### 🔑 Why are `api_id` and `api_hash` needed?
-Telegram gates direct binary TCP socket connections to its core Data Centers behind application credentials. Providing your `api_id` and `api_hash` allows Teleproto to perform Diffie-Hellman key exchange and authenticate both **User accounts** and **Bots** natively on Telegram's core MTProto RPC servers.
-
-### 💾 Stateless Session Strings
-Teleproto introduces zero filesystem locks or local SQLite databases. A session is a lightweight, portable base64 string:
-```php
-// Export session after login
-$sessionString = $user->session->exportString();
-
-// Store encrypted in MySQL/PostgreSQL/Redis:
-$userModel->update(['telegram_session' => Crypt::encryptString($sessionString)]);
-
-// Restore anywhere in a single line:
-$user = TP::fromSession(Crypt::decryptString($userModel->telegram_session));
-```
-
----
-
-## 🚀 Quick Start
-
-Teleproto provides two standard facades: `Teleproto` and `TP`.
-
-### 1. Bot Client (HTTP Bot API & Webhook Macro)
-
-```php
-use MeRezaRezaei\Teleproto\Facades\TP;
-use MeRezaRezaei\Teleproto\Types\InlineKeyboard;
-
-// Send message via default bot
 TP::bot()->sendMessage('@channel', 'Hello from Teleproto!');
-
-// Dynamic bot token at runtime with Inline Keyboard
-$keyboard = InlineKeyboard::make()
-    ->row([InlineKeyboard::urlButton('Website', 'https://example.com')])
-    ->row([InlineKeyboard::callbackButton('Click Me', 'btn_clicked')]);
-
-$bot = TP::bot('custom_token_here');
-$bot->sendMessage(chatId: 123456789, text: 'Choose an option:', options: [
-    'reply_markup' => $keyboard
-]);
 ```
 
-#### Ingesting Webhooks in 1 Line:
-Declare the webhook route in `routes/api.php`:
-```php
-// routes/api.php
-Route::telegramWebhook('telegram/webhook');
-```
-Listen to incoming updates anywhere in your app:
-```php
-// app/Providers/EventServiceProvider.php or Event::listen
-Event::listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $event) {
-    $message = $event->getMessage();
-    if ($message && ($message['text'] ?? '') === '/start') {
-        TP::bot($event->botToken)->sendMessage($message['chat']['id'], 'Welcome!');
-    }
-});
-```
+### Bot or user over native MTProto 2.0
 
-#### Local Development Polling (No ngrok needed):
-```bash
-php artisan teleproto:poll
-```
-
-#### Pluggable Update Pipelines (Redis, Postgres, Spatie Data):
-`teleproto` decouples polling from dispatching via `UpdatePollerService` and `UpdateSinkInterface`. Higher-level packages can stream updates anywhere:
-```php
-use MeRezaRezaei\Teleproto\Services\UpdatePollerService;
-use MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface;
-
-class RedisStreamSink implements UpdateSinkInterface {
-    public function handle(array $update, ?string $source = null): void {
-        Redis::xadd('telegram:updates', '*', ['data' => json_encode($update)]);
-    }
-}
-
-$poller = new UpdatePollerService(new RedisStreamSink());
-$poller->pollBot(TP::bot());
-```
-
----
-
-### 2. High-Speed Native MTProto 2.0 (Both Bots & Users)
-
-Run your **Bots** and **User Accounts** directly over Telegram's high-speed binary MTProto 2.0 TCP sockets for maximum throughput, large file transfers (up to 4GB), and zero HTTP webhook/polling overhead:
+Binary TCP RPC (Layer 227). Warm calls are a single socket round-trip; file uploads go up to 4 GB.
 
 ```php
-use MeRezaRezaei\Teleproto\Facades\TP;
-use MeRezaRezaei\Teleproto\Types\InputPeer;
+// Bot over MTProto (auth.importBotAuthorization under the hood):
+$bot = TP::botMtproto();
+$bot->login();
+$bot->sendMessage(peer: '@channel', text: 'Bot broadcast over MTProto');
 
-// A. Bot operating directly over MTProto 2.0 binary socket
-$botMtproto = TP::botMtproto('123456:BOT-TOKEN');
-$botMtproto->login();
-$botMtproto->sendMessage(peer: '@channel', text: 'Lightning fast message over MTProto binary socket!');
-
-// B. User Account operating over MTProto 2.0
-$user = TP::fromSession($sessionString);
-$user->sendMessage(peer: '@username', text: 'Hello from User MTProto!');
-$chat = $user->getFullChannel(InputPeer::channel(123456, 'access_hash'));
+// User account over MTProto:
+$user = TP::user();
+$user->sendMessage('@username', 'Hello from a user account!');
 ```
 
----
+### Mini App auth middleware
 
-### 3. Native Text & Markdown Entity Parsing
-
-Calculates exact UTF-16 code unit offsets with emoji and surrogate pair support:
-
-```php
-use MeRezaRezaei\Teleproto\Entities\EntityParser;
-
-// Parse HTML
-$parsedHtml = EntityParser::htmlToEntities('<b>Bold</b> <i>Italic</i> 😀 <a href="https://tg.org">Link</a>');
-
-// Parse MarkdownV2
-$parsedMd = EntityParser::markdownToEntities('*Bold* _Italic_ `Code` [Link](https://tg.org)');
-
-$user->sendMessage('@channel', $parsedHtml['text'], [
-    'entities' => $parsedHtml['entities']
-]);
-```
-
----
-
-### 4. Telegram Mini App (TMA) Authentication
-
-Protect your Mini App backend routes with cryptographically verified HMAC signatures:
+Cryptographic HMAC-SHA256 verification of Telegram `initData`, as one route middleware:
 
 ```php
 // routes/api.php
 Route::middleware('tg.miniapp')->group(function () {
     Route::post('/miniapp/me', function (Request $request) {
-        $telegramUser = $request->attributes->get('telegram_user');
-        return response()->json(['user' => $telegramUser]);
+        return response()->json($request->attributes->get('telegram_user'));
     });
 });
 ```
 
----
-
-### 5. Large File Streaming from Storage
-
-Stream up to 4GB media directly from Laravel Storage disks (`local`, `s3`, `minio`) in 512KB chunks:
+### Passport KYC decryption
 
 ```php
+use MeRezaRezaei\Teleproto\Passport\PassportDecryptor;
+
+$creds = PassportDecryptor::decryptCredentials(
+    encryptedData:   $payload['data'],
+    encryptedSecret: $payload['secret'],
+    privateKeyPem:   file_get_contents(storage_path('keys/passport_private.pem')),
+    hash:            $payload['hash'],
+);
+
+$firstName = $creds['personal_details']['first_name'];
+```
+
+### Stream large files straight from Laravel Storage
+
+512 KB MTProto parts, chunk-by-chunk from any Storage disk (`local`, `s3`, `minio`) — never load the file in memory:
+
+```php
+use MeRezaRezaei\Teleproto\Facades\TP;
 use MeRezaRezaei\Teleproto\Media\StorageMedia;
 
+$user   = TP::user();
+$fileId = random_int(1, PHP_INT_MAX);
 foreach (StorageMedia::readFromDisk('media/large_video.mp4', disk: 's3') as $part) {
     $user->call('upload.saveBigFilePart', [
         'file_id'          => $fileId,
@@ -247,26 +109,114 @@ foreach (StorageMedia::readFromDisk('media/large_video.mp4', disk: 's3') as $par
 }
 ```
 
----
+### Login wizard: phone / QR / 2FA / bot
 
-### 6. Telegram Passport KYC Decryption
+```bash
+php artisan teleproto:login        # phone + code, 2FA SRP handled automatically — or pick QR
+php artisan teleproto:login --qr   # scan the terminal QR from Telegram -> Settings -> Devices
+```
+
+Sessions land in `.env` as `TELEGRAM_USER_SESSION` / `TELEGRAM_BOT_SESSION`. After that, `TP::user()` and `TP::botMtproto()` take **zero parameters**.
+
+### Typed errors with official hints
+
+Every RPC failure resolves through the packaged catalog of Telegram's official error database (Layer 227) into a typed exception with a doc-backed hint:
 
 ```php
-use MeRezaRezaei\Teleproto\Passport\PassportDecryptor;
+use MeRezaRezaei\Teleproto\Exceptions\FloodWaitException;
 
-$decrypted = PassportDecryptor::decryptCredentials(
-    encryptedData:   $passportCredentials['data'],
-    encryptedSecret: $passportCredentials['secret'],
-    privateKeyPem:   file_get_contents(storage_path('keys/passport_private.pem')),
-    hash:            $passportCredentials['hash']
-);
+try {
+    TP::user()->sendMessage('@channel', 'hello');
+} catch (FloodWaitException $e) {
+    logger()->warning("Flood: retry in {$e->seconds}s — {$e->docHint}");
+}
+```
 
-$firstName = $decrypted['personal_details']['first_name'];
+### Session strings, not session files
+
+```php
+$sessionString = TP::user()->session->exportString();
+
+// Store encrypted in MySQL/PostgreSQL/Redis:
+$userModel->update(['telegram_session' => Crypt::encryptString($sessionString)]);
+
+// Restore anywhere, in one line:
+$user = TP::fromSession(Crypt::decryptString($userModel->telegram_session));
 ```
 
 ---
 
-## 📖 Documentation & Releases
+## Zero-friction install
+
+```bash
+composer require merezarezaei/teleproto
+php artisan vendor:publish --tag="teleproto-config"
+```
+
+```env
+# Bot API (HTTP) — optional if you only use MTProto
+TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+
+# MTProto 2.0 (required for user + bot binary sessions)
+# Get yours at https://my.telegram.org (API development tools)
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH="your_api_hash_here"
+
+# Written automatically by the login wizard:
+TELEGRAM_USER_SESSION="2:AQAD...:12345678:0"
+TELEGRAM_BOT_SESSION="2:AQAD...:98765432:0"
+```
+
+Then log in once: `php artisan teleproto:login`. That is the whole setup.
+
+> **Note:** the wizard is an Artisan command (the package registers no standalone `vendor/bin` binary). From a clone of this repo, `./bin/teleproto login` runs the same wizard for development.
+
+---
+
+## Tradeoffs — and why they are deliberate
+
+- **One in-flight query per connection.** No Fibers, no event loop. A blocking `call()` (encrypt → send → read) is what keeps the engine small and stateless. `msg_container` batching (N requests → 1 RTT) is the top-ranked v1.1 roadmap item.
+- **No update-handler framework.** Updates arrive as Laravel events (`TelegramUpdateReceived`) and through the one-method `UpdateSinkInterface` contract — your pipeline (Redis Stream, queue, Spatie models) plugs in at that seam. Building opinionated handlers on top is deliberately left to higher layers.
+- **Full schema registry, curated fluent builders.** Every schema method is callable *today* via `call('method.name', [...])`; generated fluent builders (`Methods::auth()->signIn()->…`) are added from a curated list validated against the schema artifacts.
+- **No proxy tunneling yet.** `setProxy()` accepts config, but connections are currently direct — tracked in the transport layer.
+
+Details and the ranked roadmap: [docs/scaling.md](docs/scaling.md) · [Core design spec](docs/superpowers/specs/2026-08-27-teleproto-core-design.md).
+
+---
+
+## Going faster
+
+The DH handshake happened once, ever — it is baked into the session string — so a cold start is just connect + salt (~49 ms measured), and a warm call is one socket round-trip (< 5 ms). Three patterns:
+
+- **Plain FPM** — completely fine for occasional calls per request.
+- **One queue worker per account** — Horizon/queue fan-out is the supported multi-account model.
+- **Octane** — keeps workers (and sockets) warm between requests.
+
+Full scaling guide, Horizon config, and honest load limits: [docs/scaling.md](docs/scaling.md).
+
+---
+
+## AI-friendly by design
+
+The [`skills/telegram-methods/`](skills/telegram-methods/) directory is a generated, per-method reference — parameter tables, return types, every official error with Telegram's own hint, and copy-paste usage:
+
+```php
+use MeRezaRezaei\Teleproto\Methods\Methods;
+
+$request = Methods::auth()->signIn()
+    ->phoneNumber('+15551234567')
+    ->phoneCodeHash($hash)
+    ->phoneCode($code)
+    ->toRequest();
+
+$result = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class)->dispatch($request);
+```
+
+The same information is indexed for agent crawlers in [`llms.txt`](llms.txt). Both are generated from the packaged schema artifacts — regenerate with `php bin/generate-skill-files.php`.
+
+---
+
+## Documentation
 
 - [Changelog & Release Notes](CHANGELOG.md)
 - [User MTProto Client Guide](docs/user-client.md)
@@ -275,24 +225,16 @@ $firstName = $decrypted['personal_details']['first_name'];
 - [Scaling: Multiple Accounts & Load Limits](docs/scaling.md)
 - [Core Engine Design Spec](docs/superpowers/specs/2026-08-27-teleproto-core-design.md)
 
----
-
-## 🧪 Testing
+## Testing
 
 ```bash
 composer test
-# or
-./vendor/bin/phpunit
 ```
 
----
-
-## 🤝 Contributing
+## Contributing
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for details.
 
----
-
-## 🛡️ License
+## License
 
 Teleproto is open-sourced software licensed under the [MIT license](LICENSE).

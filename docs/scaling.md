@@ -69,6 +69,38 @@ For **bots**, the same layout applies — swap `pollUser()` for `pollBot(TP::bot
 
 ---
 
+## ❄️ Cold Start, Measured
+
+Real numbers from a live measurement (fresh PHP process → one delivered `messages.sendMessage` RPC):
+
+| Process state | First delivered RPC |
+| :--- | :--- |
+| **Cold** — fresh process, session string loaded from `.env`/DB | **~49 ms** |
+| **Warm** — client already connected in-process | **~5 ms** |
+
+The key fact: the ~49 ms cold cost is **socket + encrypted-session setup only — never the handshake**. The expensive Diffie–Hellman handshake happens **once, ever**: `php artisan teleproto:login` performs it and packs the resulting auth key into the session string (`TELEGRAM_USER_SESSION`). Every later process loads that string and pays only the ~49 ms setup before its first call, then ~5 ms per call.
+
+What that means per Laravel runtime:
+
+- **PHP-FPM** — every request is a cold process. ~49 ms of setup is perfectly fine for *occasional* Telegram work (a notification, a Passport callback). Don't push a per-request hot path through MTProto at volume; that's what workers are for.
+- **Queue workers / Horizon** — each worker boots once per account and stays warm: every subsequent call is the ~5 ms path. The layout above already gives you this for free.
+- **Octane** — boot once, stay warm over HTTP: build the client in a container binding during boot and reuse it across requests (workers handle one request at a time, matching the single in-flight socket).
+
+```text
+ once, ever                 every process                  per call
+──────────────────        ─────────────────────────      ─────────────────
+teleproto:login     ──▶   load session string      ──▶   warm RPC ≈ 5 ms
+  (DH handshake           (~49 ms cold start:            │
+   → auth key)             TCP + session setup)           ├── FPM: every request cold
+                           ├── FPM: every request         │     (fine: occasional)
+                           ├── queue worker: once         └── worker/Octane:
+                           └── Octane: boot once               warm from call #2
+```
+
+The honest takeaway: Teleproto has no daemon precisely because cold start is cheap. You only reach for long-lived workers when you want *warm* latency or continuous polling — not because the library forces you to.
+
+---
+
 ## 🗺️ v1.1 Roadmap (Ranked)
 
 Audited against the current `EncryptedConnection`; highest value first:

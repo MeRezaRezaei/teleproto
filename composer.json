@@ -1,8 +1,31 @@
 {
     "name": "merezarezaei/teleproto",
-    "description": "Unified Telegram Multi-Protocol Engine for PHP & Laravel (MTProto 2.0, Bot API, Mini Apps & Passport)",
+    "description": "Zero-friction Telegram for Laravel & PHP — MTProto 2.0, Bot API, Mini App auth, Passport KYC",
     "type": "library",
     "license": "MIT",
+    "keywords": [
+        "telegram",
+        "mtproto",
+        "laravel",
+        "bot",
+        "bot-api",
+        "mini-app",
+        "passport",
+        "kyc",
+        "session",
+        "qr-login",
+        "php",
+        "telegram-bot",
+        "telegram-client"
+    ],
+    "homepage": "https://github.com/MeRezaRezaei/teleproto",
+    "support": {
+        "issues": "https://github.com/MeRezaRezaei/teleproto/issues",
+        "source": "https://github.com/MeRezaRezaei/teleproto/tree/main",
+        "docs": "https://github.com/MeRezaRezaei/teleproto/tree/main/docs",
+        "security": "https://github.com/MeRezaRezaei/teleproto/blob/main/SECURITY.md"
+    },
+    "readme": "README.md",
     "authors": [
         {
             "name": "MeRezaRezaei"
@@ -47,6 +70,9 @@
             "MeRezaRezaei\\Teleproto\\Tests\\": "tests/"
         }
     },
+    "bin": [
+        "bin/teleproto"
+    ],
     "extra": {
         "laravel": {
             "providers": [
