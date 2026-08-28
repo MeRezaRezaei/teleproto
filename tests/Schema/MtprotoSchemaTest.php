@@ -23,6 +23,28 @@ class MtprotoSchemaTest extends TestCase
         $this->assertGreaterThan(700, count($a['methods']));
     }
 
+    public function testArtifactEnvelopeCarriesPerSourceLayerProvenance(): void
+    {
+        $a = self::artifact();
+        // layer stays the max for BC; layers exposes the two raw sources
+        $this->assertSame(229, $a['layers']['schema']);
+        $this->assertSame(227, $a['layers']['errors']);
+        $this->assertSame(max($a['layers']['schema'], $a['layers']['errors']), $a['layer']);
+    }
+
+    public function testMethodDescriptionsAreHtmlUnescaped(): void
+    {
+        $raw = (string) (((array) json_decode(
+            (string) file_get_contents(dirname(__DIR__, 2) . '/schema/sources/extracted.json'),
+            true
+        ))['method_account.getPasswordSettings']);
+        $expected = str_replace(['&lt;', '&gt;', '&amp;'], ['<', '>', '&'], $raw);
+        $description = self::artifact()['methods']['account.getPasswordSettings']['description'];
+        $this->assertSame($expected, $description);
+        $this->assertStringNotContainsString('&amp;', $description);
+        $this->assertStringContainsString('&', $description);
+    }
+
     public function testSpotEntryMatchesOfficialSchema(): void
     {
         $m = self::artifact()['methods']['messages.sendMessage'];

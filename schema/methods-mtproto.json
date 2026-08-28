@@ -2,6 +2,10 @@
     "_generated": true,
     "api": "mtproto",
     "layer": 229,
+    "layers": {
+        "schema": 229,
+        "errors": 227
+    },
     "source": "tdesktop dev api.tl + mtproto.tl + core.telegram.org/api/errors.json + MadelineProto extracted.json",
     "methods": {
         "account.acceptAuthorization": {
@@ -959,7 +963,7 @@
                 "BUSINESS_CONNECTION_NOT_ALLOWED",
                 "PASSWORD_HASH_INVALID"
             ],
-            "description": "Get private info associated to the password info (recovery email, telegram [passport](https://core.telegram.org/passport) info &amp; so on)"
+            "description": "Get private info associated to the password info (recovery email, telegram [passport](https://core.telegram.org/passport) info & so on)"
         },
         "account.getPrivacy": {
             "id": "0xdadbc950",

@@ -83,7 +83,9 @@ foreach (['api.tl', 'mtproto.tl'] as $file) {
 
 // 2) invert errors.json {code: {MSG: [methods]}} -> method -> [MSG]
 $errorsRaw = (array) json_decode((string) file_get_contents("{$root}/schema/sources/errors.json"), true);
-$layer = max($layer, (int) ($errorsRaw['layer'] ?? 0));
+$errorsLayer = (int) ($errorsRaw['layer'] ?? 0);
+$tlLayer = $layer;
+$layer = max($tlLayer, $errorsLayer);
 foreach (($errorsRaw['errors'] ?? []) as $messages) {
     foreach ((array) $messages as $msg => $methodsList) {
         foreach ((array) $methodsList as $m) {
@@ -103,7 +105,7 @@ if (file_exists($docsPath)) {
 $escapeKey = static fn (string $s): string => str_replace(['&', '<', '>'], ['&amp;', '&lt;', '&gt;'], $s);
 $unescape = static fn (string $s): string => str_replace(['&lt;', '&gt;', '&amp;'], ['<', '>', '&'], $s);
 foreach ($methods as $name => &$m) {
-    $m['description'] = (string) ($docsMap["method_{$name}"] ?? '');
+    $m['description'] = isset($docsMap["method_{$name}"]) ? $unescape((string) $docsMap["method_{$name}"]) : '';
     foreach ($m['params'] as $i => $p) {
         // conditional params are keyed WITH the flag prefix in extracted.json
         // (HTML-escaped): method_X_param_f_type_flags.N?Vector&lt;T&gt;
@@ -125,6 +127,7 @@ file_put_contents(
         '_generated' => true,
         'api' => 'mtproto',
         'layer' => $layer,
+        'layers' => ['schema' => $tlLayer, 'errors' => $errorsLayer],
         'source' => 'tdesktop dev api.tl + mtproto.tl + core.telegram.org/api/errors.json + MadelineProto extracted.json',
         'methods' => $methods,
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
