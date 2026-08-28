@@ -28,11 +28,63 @@ class AuthKeyFactory
     private const RESOURCE_PATH = __DIR__ . '/../resources/telegram_public_key.pub';
 
     /**
+     * The official 2048-bit safe prime Telegram's production DCs use as
+     * dh_prime (the one published in the core.telegram.org sample handshake
+     * and hardcoded by TDLib-class clients). Extracted from the official
+     * transcript at https://core.telegram.org/mtproto/samples-auth_key .
+     */
+    public const KNOWN_DH_PRIME_HEX =
+        'c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f'
+        . '48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c372'
+        . '0fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f64247'
+        . '7fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a69'
+        . '5811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed9'
+        . '50d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e'
+        . '83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635'
+        . 'b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b';
+
+    /**
      * server_salt := substr(new_nonce, 0, 8) XOR substr(server_nonce, 0, 8)
      */
     public static function serverSalt(string $newNonce, string $serverNonce): string
     {
         return substr($newNonce, 0, 8) ^ substr($serverNonce, 0, 8);
+    }
+
+    /**
+     * Validates the server's DH parameters against the official spec:
+     * dh_prime must be the KNOWN 2048-bit safe prime (equality check with
+     * the published constant — generic primality testing is unnecessary for
+     * a fixed server constant) and g must lie in 2..7.
+     *
+     * @throws RuntimeException naming the offending field on violation
+     */
+    public static function assertKnownDhParams(int $g, string $dhPrime): void
+    {
+        if ($g < 2 || $g > 7) {
+            throw new RuntimeException(sprintf('AuthKeyFactory: g must be in 2..7, got %d', $g));
+        }
+        if (!hash_equals(hex2bin(self::KNOWN_DH_PRIME_HEX), $dhPrime)) {
+            throw new RuntimeException('AuthKeyFactory: dh_prime is not the official 2048-bit MTProto safe prime');
+        }
+    }
+
+    /**
+     * Validates the nonce/server_nonce echo of a server handshake response
+     * (server_DH_params_ok, server_DH_inner_data, dh_gen_ok) against the
+     * values the client generated, per core.telegram.org/mtproto/auth_key.
+     *
+     * @param array<string, mixed> $obj decoded server response carrying nonce fields
+     * @throws RuntimeException naming the mismatched field on violation
+     */
+    public static function assertNonceEcho(array $obj, string $nonce, string $serverNonce, string $context): void
+    {
+        if (!hash_equals($nonce, (string)($obj['nonce'] ?? ''))) {
+            throw new RuntimeException(sprintf('AuthKeyFactory: %s nonce mismatch', $context));
+        }
+        if (!hash_equals($serverNonce, (string)($obj['server_nonce'] ?? ''))) {
+            throw new RuntimeException(sprintf('AuthKeyFactory: %s server_nonce mismatch', $context));
+        }
     }
 
     /**
@@ -103,7 +155,7 @@ class AuthKeyFactory
         // --- select the bundled public key whose fingerprint the server listed
         $pem = null;
         $fingerprint = 0;
-        foreach (self::bundledPublicKeys() as $candidate) {
+        foreach (static::bundledPublicKeys() as $candidate) {
             $own = self::fingerprintBytesOf($candidate);
             $own[0] = chr(ord($own[0]) & 0x7f);
             foreach ($resPqObj['server_public_key_fingerprints'] as $serverFingerprint) {
@@ -141,6 +193,7 @@ class AuthKeyFactory
         if ($serverDhObj['_'] !== 'server_DH_params_ok') {
             throw new RuntimeException('AuthKeyFactory: DH params rejected (' . $serverDhObj['_'] . ')');
         }
+        self::assertNonceEcho($serverDhObj, $nonce, $serverNonce, 'server_DH_params_ok');
 
         // tmp_aes_key := SHA1(new_nonce + server_nonce) + substr(SHA1(server_nonce + new_nonce), 0, 12)
         // tmp_aes_iv  := substr(SHA1(server_nonce + new_nonce), 12, 8) + SHA1(new_nonce + new_nonce)
@@ -153,6 +206,8 @@ class AuthKeyFactory
         if ($innerDhObj['_'] !== 'server_DH_inner_data') {
             throw new RuntimeException('AuthKeyFactory: bad server_DH_inner_data');
         }
+        self::assertNonceEcho($innerDhObj, $nonce, $serverNonce, 'server_DH_inner_data');
+        self::assertKnownDhParams((int)$innerDhObj['g'], (string)$innerDhObj['dh_prime']);
 
         // --- Step 3: set_client_DH_params
         $g = new BigInteger((string)$innerDhObj['g']);
@@ -184,11 +239,12 @@ class AuthKeyFactory
         if ($authObj['_'] !== 'dh_gen_ok') {
             throw new RuntimeException('AuthKeyFactory: DH generation failed (' . $authObj['_'] . ')');
         }
+        self::assertNonceEcho($authObj, $nonce, $serverNonce, 'dh_gen_ok');
 
         $authKey = self::bigToBytes($gA->modPow($b, $dhPrime));
         $authKey = str_pad($authKey, 256, "\x00", STR_PAD_LEFT);
 
-        if (!hash_equals(self::newNonceHash1($newNonce, $authKey), $authObj['new_nonce_hash1'])) {
+        if (!hash_equals(self::newNonceHash1($newNonce, $authKey), (string)$authObj['new_nonce_hash1'])) {
             throw new RuntimeException('AuthKeyFactory: new_nonce_hash1 mismatch');
         }
 

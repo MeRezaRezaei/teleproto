@@ -35,6 +35,13 @@ class Client
 
     public const DEFAULT_PORT = 443;
 
+    /**
+     * Telegram kills idle encrypted connections ~60s after the last message;
+     * a connection idle longer than this gets a ping_delay_disconnect
+     * keepalive BEFORE its next RPC (MadelineProto PingLoop parity, lazy).
+     */
+    public const KEEPALIVE_IDLE_SECONDS = 45.0;
+
     protected ?array $proxyConfig = null;
     /** Tri-state: null = defer to config('teleproto.live_mode') at first use; true/false = explicit. */
     private ?bool $live = null;
@@ -142,7 +149,11 @@ class Client
         }
 
         try {
-            return $this->ensureConnection()->call($method, $params);
+            $conn = $this->ensureConnection();
+            if ($conn->idleSeconds() > self::KEEPALIVE_IDLE_SECONDS) {
+                $conn->ping(); // lazy keepalive: keep the socket past the ~60s server idle kill
+            }
+            return $conn->call($method, $params);
         } catch (TelegramException $e) {
             throw $e; // RPC-level error: the connection stays usable
         } catch (RuntimeException $e) {

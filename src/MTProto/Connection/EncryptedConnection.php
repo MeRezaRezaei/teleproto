@@ -28,6 +28,18 @@ class EncryptedConnection
     public const LAYER = 227;
 
     /**
+     * MTProto keepalive constructors (core.telegram.org/mtproto/service_messages):
+     *   pong#347773c5 msg_id:long ping_id:long = Pong
+     *   ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong
+     * Registered lazily (not in TLRegistry::SCHEMA) so the ping surface stays
+     * owned by this class. Idempotent: re-registering overwrites identical entries.
+     */
+    public const PING_SCHEMA = [
+        'pong#347773c5 msg_id:long ping_id:long = Pong',
+        'ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong',
+    ];
+
+    /**
      * Transient push messages skipped while waiting for the rpc_result. Both
      * constructors are registered in TLRegistry, so their ids are looked up
      * there (msgs_ack msg_ids:Vector long = MsgsAck -> 0x62d6b459,
@@ -43,12 +55,21 @@ class EncryptedConnection
     protected bool $inited = false;
     protected int $lastMessageId = 0;
     protected int $contentCounter = -1;
+    protected float $lastActivity = 0.0;
 
     /** @param resource|null $socket */
     final public function __construct(protected SessionData $session, $socket = null, protected int $apiId = 0)
     {
         $this->socket = $socket;
         $this->sessionId = (int)unpack('P', random_bytes(8))[1];
+        $this->serverSalt = $session->serverSalt; // persisted salt survives reconnects
+    }
+
+    public static function registerPingSchema(): void
+    {
+        foreach (self::PING_SCHEMA as $line) {
+            TLRegistry::register($line);
+        }
     }
 
     public static function connect(SessionData $session, string $host, int $port = 443, float $timeout = 10.0): static
@@ -91,6 +112,40 @@ class EncryptedConnection
     }
 
     /**
+     * MTProto keepalive: ping_delay_disconnect with a random ping_id. The
+     * server answers pong (same ping_id) and guarantees not to close the
+     * connection for disconnect_delay seconds (MadelineProto PingLoop parity).
+     *
+     * @return array<string, mixed> the pong result (['_' => 'pong', 'msg_id' => ..., 'ping_id' => ...])
+     */
+    public function ping(int $disconnectDelay = 50): array
+    {
+        self::registerPingSchema();
+        return $this->call('ping_delay_disconnect', [
+            'ping_id' => random_int(0, PHP_INT_MAX),
+            'disconnect_delay' => $disconnectDelay,
+        ]);
+    }
+
+    /**
+     * Seconds since the last successful send/receive on this connection
+     * (0.0 while no traffic has happened yet).
+     */
+    public function idleSeconds(): float
+    {
+        return $this->lastActivity === 0.0 ? 0.0 : max(0.0, microtime(true) - $this->lastActivity);
+    }
+
+    /**
+     * Current server salt (last one seen from bad_server_salt / new_session_created),
+     * also mirrored into the SessionData for persistence.
+     */
+    public function getServerSalt(): int
+    {
+        return $this->serverSalt;
+    }
+
+    /**
      * @return array<string, mixed> decoded result of the RPC call
      * @throws TelegramException on rpc_error
      * @throws RuntimeException on transport/protocol failures
@@ -127,11 +182,12 @@ class EncryptedConnection
                 messageId: $this->nextMessageId()
             );
             FrameCodec::sendAbridgedMessage($this->socket, $packet);
+            $this->touchActivity();
 
             $result = $this->receiveDecodedResponse();
 
             if (($result['_'] ?? '') === 'bad_server_salt') {
-                $this->serverSalt = (int)$result['new_server_salt'];
+                $this->refreshServerSalt((int)$result['new_server_salt']);
                 continue; // resend with the fresh salt and a fresh msg_id/seq_no
             }
 
@@ -145,6 +201,11 @@ class EncryptedConnection
             }
 
             if (($result['_'] ?? '') !== 'rpc_result') {
+                // The server answers ping_delay_disconnect with a BARE pong
+                // service message (not an rpc_result) — terminal reply for pings.
+                if (($result['_'] ?? '') === 'pong' && $constructor === 'ping_delay_disconnect') {
+                    return $result;
+                }
                 throw new RuntimeException(sprintf(
                     "EncryptedConnection: unexpected response '%s'",
                     $result['_'] ?? '(no constructor)'
@@ -186,6 +247,7 @@ class EncryptedConnection
         $transientIds = self::transientConstructorIds();
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
             $frame = FrameCodec::receiveAbridgedMessage($this->socket);
+            $this->touchActivity();
 
             // A 4-byte frame decoding to a negative int32 is a transport-level
             // error code (e.g. -404: auth key unknown) — surface it typed.
@@ -200,6 +262,11 @@ class EncryptedConnection
 
             $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
             if (in_array($id, $transientIds, true)) {
+                if ($id === TLRegistry::id('new_session_created')) {
+                    $offset = 0;
+                    $push = TLDecoder::decodeObject($payload, $offset);
+                    $this->refreshServerSalt((int)($push['server_salt'] ?? $this->serverSalt));
+                }
                 continue; // transient push, keep reading
             }
 
@@ -210,7 +277,7 @@ class EncryptedConnection
             // no vector header, no per-message constructor) — must be hand-parsed.
             if ($id === 0x73f1f8dc) {
                 $actionable = self::parseNakedContainer($payload, $this->serverSalt);
-                $this->serverSalt = $actionable['salt'];
+                $this->refreshServerSalt($actionable['salt']);
                 if ($actionable['message'] === null) {
                     continue; // container held only transients; keep reading
                 }
@@ -274,6 +341,23 @@ class EncryptedConnection
             $candidate = $this->lastMessageId + 4; // keeps ≡ 0 (mod 4) while strictly increasing
         }
         return $this->lastMessageId = $candidate;
+    }
+
+    /**
+     * Refreshes the in-memory salt and mirrors it into the SessionData the
+     * connection holds (same object reference the Client owns), so a fresh
+     * salt from bad_server_salt / new_session_created survives reconnects
+     * and session persistence.
+     */
+    protected function refreshServerSalt(int $salt): void
+    {
+        $this->serverSalt = $salt;
+        $this->session->serverSalt = $salt;
+    }
+
+    protected function touchActivity(): void
+    {
+        $this->lastActivity = microtime(true);
     }
 
     /**

@@ -97,9 +97,11 @@ class PacketCodec
      * @param string $packet Binary packet from socket
      * @param string $authKey 256-byte authentication key
      * @param bool $fromServer Whether packet was received from Telegram server (true) or from client (false)
+     * @param int|null $expectedSessionId When provided, the decrypted session_id must match it
+     *                                    (defense against cross-session replays)
      * @return array{server_salt: int, session_id: int, message_id: int, seq_no: int, payload: string}
      */
-    public static function decryptPacket(string $packet, string $authKey, bool $fromServer = true): array
+    public static function decryptPacket(string $packet, string $authKey, bool $fromServer = true, ?int $expectedSessionId = null): array
     {
         if (strlen($packet) < 40) {
             throw new RuntimeException("MTProto packet too short.");
@@ -132,6 +134,38 @@ class PacketCodec
         $messageId = unpack('P', substr($decrypted, 16, 8))[1];
         $seqNo = unpack('V', substr($decrypted, 24, 4))[1];
         $dataLen = unpack('V', substr($decrypted, 28, 4))[1];
+
+        if ($expectedSessionId !== null && $sessionId !== $expectedSessionId) {
+            throw new RuntimeException(sprintf(
+                'MTProto session_id mismatch: expected %d, got %d.',
+                $expectedSessionId,
+                $sessionId
+            ));
+        }
+
+        // message_id: positive, and its unix-time high 32 bits must not be more
+        // than 300 seconds in the future (leeway for client/server clock drift)
+        if ($messageId <= 0) {
+            throw new RuntimeException('MTProto message_id must be positive.');
+        }
+        if (($messageId >> 32) >= time() + 300) {
+            throw new RuntimeException(sprintf(
+                'MTProto message_id %d is too far in the future (unixtime %d, now %d).',
+                $messageId,
+                $messageId >> 32,
+                time()
+            ));
+        }
+
+        // Payload length must stay inside the decrypted plaintext: reject zero
+        // and truncation instead of silently substr()-ing a short payload
+        if ($dataLen < 1 || $dataLen > strlen($decrypted) - 32) {
+            throw new RuntimeException(sprintf(
+                'MTProto payload length %d out of bounds for %d decrypted bytes.',
+                $dataLen,
+                strlen($decrypted)
+            ));
+        }
 
         $payload = substr($decrypted, 32, $dataLen);
 

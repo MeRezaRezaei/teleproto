@@ -17,12 +17,13 @@ class SessionData
         public string $authKey,
         public int $serverTimeDelta = 0,
         public int $seqNo = 0,
-        public ?int $userId = null
+        public ?int $userId = null,
+        public int $serverSalt = 0
     ) {}
 
     /**
      * Export session into a safe, portable base64 string for database/Redis storage.
-     * Format: "dcId:base64(authKey):userId:serverTimeDelta"
+     * Format: "dcId:base64(authKey):userId:serverTimeDelta:serverSalt"
      */
     public function exportString(): string
     {
@@ -31,6 +32,7 @@ class SessionData
             base64_encode($this->authKey),
             $this->userId ?? 0,
             $this->serverTimeDelta,
+            $this->serverSalt,
         ]);
 
         return base64_encode($payload);
@@ -38,6 +40,7 @@ class SessionData
 
     /**
      * Reconstruct SessionData from an exported session string.
+     * Legacy 4-field strings (no serverSalt) import with salt 0.
      */
     public static function importString(string $sessionString): self
     {
@@ -55,7 +58,8 @@ class SessionData
             dcId: (int)$parts[0],
             authKey: base64_decode($parts[1]),
             serverTimeDelta: (int)$parts[3],
-            userId: (int)$parts[2] !== 0 ? (int)$parts[2] : null
+            userId: (int)$parts[2] !== 0 ? (int)$parts[2] : null,
+            serverSalt: (int)($parts[4] ?? 0)
         );
     }
 
@@ -67,6 +71,7 @@ class SessionData
             'server_time_delta' => $this->serverTimeDelta,
             'seq_no' => $this->seqNo,
             'user_id' => $this->userId,
+            'server_salt' => $this->serverSalt,
         ];
     }
 
@@ -77,7 +82,8 @@ class SessionData
             authKey: isset($data['auth_key']) ? base64_decode($data['auth_key']) : '',
             serverTimeDelta: (int)($data['server_time_delta'] ?? 0),
             seqNo: (int)($data['seq_no'] ?? 0),
-            userId: isset($data['user_id']) ? (int)$data['user_id'] : null
+            userId: isset($data['user_id']) ? (int)$data['user_id'] : null,
+            serverSalt: (int)($data['server_salt'] ?? 0)
         );
     }
 }

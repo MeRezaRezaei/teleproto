@@ -6,6 +6,8 @@ namespace MeRezaRezaei\Teleproto\Services;
 
 use Closure;
 use MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException;
+use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use Throwable;
 
 /**
@@ -14,6 +16,21 @@ use Throwable;
  */
 class UpdatePollerService
 {
+    /**
+     * Floor for every backoff sleep: even unknown errors pause briefly
+     * instead of hammering Telegram in a tight loop.
+     */
+    public const MIN_BACKOFF_SECONDS = 2;
+
+    /**
+     * Upper bound for a single flood backoff sleep. Telegram can demand
+     * FLOOD_WAIT_X periods of many hours; clamping each sleep to one hour
+     * keeps the loop responsive to stop() and avoids near-infinite hangs
+     * (in production restarts and in test suites alike). The poller simply
+     * retries hourly until the flood window lapses.
+     */
+    public const MAX_BACKOFF_SECONDS = 3600;
+
     protected UpdateSinkInterface $sink;
     /** @var (Closure(array<string, mixed>): bool)|null */
     protected ?Closure $filter = null;
@@ -44,6 +61,51 @@ class UpdatePollerService
     {
         $this->filter = $filter;
         return $this;
+    }
+
+    /**
+     * Compute how long a polling loop should back off after catching $e.
+     *
+     * Pure function (no side effects) so backoff policy is unit-testable:
+     *
+     * - Rpc\FloodWaitException (MTProto FLOOD_WAIT_X): sleep the demanded
+     *   $seconds, clamped to [MIN_BACKOFF_SECONDS, MAX_BACKOFF_SECONDS].
+     * - Bot API 429 (TelegramException code 429 whose description carries
+     *   "retry after N", as thrown by BotClient): sleep N, same clamp.
+     * - Anything else: the historical flat MIN_BACKOFF_SECONDS pause.
+     */
+    public static function secondsToWait(Throwable $e): int
+    {
+        if ($e instanceof FloodWaitException) {
+            return max(self::MIN_BACKOFF_SECONDS, min($e->seconds, self::MAX_BACKOFF_SECONDS));
+        }
+
+        if ($e instanceof TelegramException && $e->getCode() === 429) {
+            $retryAfter = self::parseRetryAfterSeconds($e->getMessage());
+            if ($retryAfter !== null) {
+                return max(self::MIN_BACKOFF_SECONDS, min($retryAfter, self::MAX_BACKOFF_SECONDS));
+            }
+        }
+
+        return self::MIN_BACKOFF_SECONDS;
+    }
+
+    /**
+     * Extract the N from Bot API 429 descriptions like
+     * "Too Many Requests: retry after 25" using sscanf only
+     * (src/ is regex-free by spec).
+     */
+    protected static function parseRetryAfterSeconds(string $message): ?int
+    {
+        $marker = 'retry after';
+        $pos = stripos($message, $marker);
+        if ($pos === false) {
+            return null;
+        }
+
+        sscanf(substr($message, $pos + strlen($marker)), '%*[^0-9]%d', $seconds);
+
+        return is_int($seconds) ? $seconds : null;
     }
 
     /**
@@ -87,7 +149,7 @@ class UpdatePollerService
                 if (!$this->running) {
                     break;
                 }
-                sleep(2);
+                sleep(self::secondsToWait($e));
             }
         }
     }
@@ -141,7 +203,7 @@ class UpdatePollerService
                 if (!$this->running) {
                     break;
                 }
-                sleep(2);
+                sleep(self::secondsToWait($e));
             }
         }
     }

@@ -10,6 +10,28 @@ use RuntimeException;
 class PasswordCalculator
 {
     /**
+     * Validates the server-supplied SRP scalars per core.telegram.org/api/srp:
+     * srp_B must satisfy 0 < B < p (rejecting B >= p and B mod p == 0), and
+     * u = SHA256(A|B) must be nonzero (a zero u would collapse the S exponent;
+     * clients are expected to abort and re-fetch account.getPassword).
+     *
+     * @throws RuntimeException naming the offending scalar on violation
+     */
+    public static function assertSrpScalarsValid(BigInteger $srpB, BigInteger $p, BigInteger $u): void
+    {
+        $zero = new BigInteger(0);
+        if ($srpB->compare($p) >= 0) {
+            throw new RuntimeException('PasswordCalculator: srp_B must be smaller than p (got srp_B >= p)');
+        }
+        if ($srpB->compare($zero) === 0 || $srpB->divide($p)[1]->compare($zero) === 0) {
+            throw new RuntimeException('PasswordCalculator: srp_B must not be divisible by p (got B mod p == 0)');
+        }
+        if ($u->compare($zero) === 0) {
+            throw new RuntimeException('PasswordCalculator: u == 0 (SRP aborted; re-fetch account.getPassword and retry)');
+        }
+    }
+
+    /**
      * Calculates Telegram SRP 2FA check password proof.
      *
      * @param array<string, mixed> $accountPassword Object returned by account.getPassword
@@ -52,6 +74,8 @@ class PasswordCalculator
 
         // u = SHA256(A | B)
         $u = new BigInteger(hash('sha256', $AForHash . $BForHash, true), 256);
+
+        self::assertSrpScalarsValid($srpB, $p, $u);
 
         // gx = g^x mod p
         $gx = $g->modPow($x, $p);
