@@ -84,16 +84,16 @@ class PlainConnectionTest extends TestCase
         $conn = new PlainConnection($clientSock);
 
         // fake telegram: pre-buffer one envelope-wrapped response
-        fwrite($serverSock, FrameCodec::wrapPayload(
-            PlainConnection::buildPlainEnvelope('handshake-payload', 0x6A4670610004F478)
+        fwrite($serverSock, FrameCodec::wrapAbridgedPayload(
+            PlainConnection::buildPlainEnvelope('handshake-payload!!!', 0x6A4670610004F478)
         ));
 
-        $response = $conn->request('handshake-payload');
-        $this->assertSame('handshake-payload', $response);
+        $response = $conn->request('handshake-payload!!!');
+        $this->assertSame('handshake-payload!!!', $response);
 
         // the request itself must have arrived framed and envelope-wrapped
-        $this->assertSame('handshake-payload', PlainConnection::parsePlainEnvelope(
-            FrameCodec::receiveMessage($serverSock)
+        $this->assertSame('handshake-payload!!!', PlainConnection::parsePlainEnvelope(
+            FrameCodec::receiveAbridgedMessage($serverSock)
         ));
 
         $conn->close();

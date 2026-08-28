@@ -78,11 +78,11 @@ class PlainConnection
 
     public function request(string $payload): string
     {
-        FrameCodec::sendMessage(
+        FrameCodec::sendAbridgedMessage(
             $this->socket,
             self::buildPlainEnvelope($payload, PacketCodec::generateMessageId())
         );
-        return self::parsePlainEnvelope(FrameCodec::receiveMessage($this->socket));
+        return self::parsePlainEnvelope(FrameCodec::receiveAbridgedMessage($this->socket));
     }
 
     public function close(): void

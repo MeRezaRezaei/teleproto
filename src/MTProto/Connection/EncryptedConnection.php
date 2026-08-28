@@ -124,7 +124,7 @@ class EncryptedConnection
                 serverTimeDelta: $this->session->serverTimeDelta,
                 messageId: $this->nextMessageId()
             );
-            FrameCodec::sendMessage($this->socket, $packet);
+            FrameCodec::sendAbridgedMessage($this->socket, $packet);
 
             $result = $this->receiveDecodedResponse();
 
@@ -173,7 +173,7 @@ class EncryptedConnection
     {
         $transientIds = self::transientConstructorIds();
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
-            $frame = FrameCodec::receiveMessage($this->socket);
+            $frame = FrameCodec::receiveAbridgedMessage($this->socket);
             $msg = PacketCodec::decryptPacket($frame, $this->session->authKey);
             $payload = $msg['payload'];
 

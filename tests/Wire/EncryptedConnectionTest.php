@@ -300,7 +300,7 @@ class EncryptedConnectionTest extends TestCase
      */
     private function seedFakeServerResponse($serverSock, string $authKey, string $payload): void
     {
-        fwrite($serverSock, FrameCodec::wrapPayload(PacketCodec::encryptPacket(
+        fwrite($serverSock, FrameCodec::wrapAbridgedPayload(PacketCodec::encryptPacket(
             payload: $payload,
             authKey: $authKey,
             sessionId: 0x5E5510A1,
@@ -316,7 +316,7 @@ class EncryptedConnectionTest extends TestCase
     private function decryptFakeServerRequest($serverSock, string $authKey): array
     {
         return PacketCodec::decryptPacket(
-            FrameCodec::receiveMessage($serverSock),
+            FrameCodec::receiveAbridgedMessage($serverSock),
             $authKey,
             fromServer: false
         );
