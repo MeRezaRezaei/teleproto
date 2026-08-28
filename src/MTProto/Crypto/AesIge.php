@@ -25,9 +25,11 @@ class AesIge
         $iv2 = substr($iv, 16, 16);
 
         $len = strlen($data);
-        if ($len % 16 !== 0) {
-            $data .= str_repeat("\x00", 16 - ($len % 16));
-            $len = strlen($data);
+        if ($len === 0 || $len % 16 !== 0) {
+            // MTProto always pads payloads to a multiple of 16 BEFORE calling
+            // (PacketCodec pads with random bytes; RSA-PAD pads to 224). Silent
+            // zero-padding here would corrupt round-trips — fail loudly instead.
+            throw new RuntimeException('AES-IGE input must be a non-empty multiple of 16 bytes');
         }
 
         $cipher = '';

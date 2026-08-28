@@ -265,10 +265,31 @@ class TeleprotoClientTest extends TestCase
     public function testTerminalQrRendering(): void
     {
         $url = 'tg://login?token=dGVzdF9sb2dpbl90b2tlbl8xMjM0NTY3ODkw';
-        $qrString = \MeRezaRezaei\Teleproto\Support\TerminalQr::render($url);
 
-        $this->assertNotEmpty($qrString);
+        // With chillerlan/php-qrcode installed (dev dependency) the render
+        // must produce a REAL scannable matrix of half-blocks.
+        $qrString = \MeRezaRezaei\Teleproto\Support\TerminalQr::render($url);
+        $this->assertNotNull($qrString);
         $this->assertStringContainsString('█', $qrString);
+
+        // renderOrUrl always returns actionable output either way
+        $fallback = \MeRezaRezaei\Teleproto\Support\TerminalQr::renderOrUrl($url);
+        $this->assertStringContainsString($url, $fallback);
+    }
+
+    public function testLegacyFloodWaitExceptionAlias(): void
+    {
+        $e = new \MeRezaRezaei\Teleproto\Exceptions\FloodWaitException(17);
+        $this->assertInstanceOf(\MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException::class, $e);
+        $this->assertSame(17, $e->getSeconds());
+        $this->assertSame(17, $e->seconds);
+    }
+
+    public function testAesIgeRejectsNonBlockMultiple(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('multiple of 16');
+        \MeRezaRezaei\Teleproto\MTProto\Crypto\AesIge::encrypt('short', random_bytes(32), random_bytes(32));
     }
 
     public function testUserSpecificMtprotoMethods(): void

@@ -109,7 +109,7 @@ class LoginCommand extends Command
             $session = $qrRes['session'];
             $loginUrl = $qrRes['url'];
 
-            $this->line(TerminalQr::render($loginUrl));
+            $this->line(TerminalQr::renderOrUrl($loginUrl));
             $this->components->info("1. Open Telegram on your phone -> Settings -> Devices -> Link Desktop Device.");
             $this->components->info("2. Scan the QR code above or open link: " . $loginUrl);
 

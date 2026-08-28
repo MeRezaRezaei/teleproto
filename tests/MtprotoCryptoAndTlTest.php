@@ -14,13 +14,14 @@ class MtprotoCryptoAndTlTest extends TestCase
     {
         $key = random_bytes(32);
         $iv = random_bytes(32);
-        $plaintext = 'Secret Telegram MTProto message payload 1234567890!';
+        // IGE inputs must be block-aligned (PacketCodec pads before calling)
+        $plaintext = str_pad('Secret Telegram MTProto message payload 1234567890!', 64, '.');
 
         $cipher = AesIge::encrypt($plaintext, $key, $iv);
+        $this->assertSame(strlen($plaintext), strlen($cipher));
         $decrypted = AesIge::decrypt($cipher, $key, $iv);
 
-        // Strip padding null bytes
-        $this->assertEquals($plaintext, rtrim($decrypted, "\x00"));
+        $this->assertSame($plaintext, $decrypted);
     }
 
     public function testTLStringPackingAndUnpacking(): void
