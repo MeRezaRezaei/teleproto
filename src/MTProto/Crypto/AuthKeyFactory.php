@@ -155,20 +155,14 @@ class AuthKeyFactory
         // tmp_aes_key := SHA1(new_nonce + server_nonce) + substr(SHA1(server_nonce + new_nonce), 0, 12)
         // tmp_aes_iv  := substr(SHA1(server_nonce + new_nonce), 12, 8) + SHA1(new_nonce + new_nonce)
         //               + substr(new_nonce, 0, 4)
-        $sha1NnSn = sha1($newNonce . $serverNonce, true);
-        $sha1SnNn = sha1($serverNonce . $newNonce, true);
-        $aesKey = $sha1NnSn . substr($sha1SnNn, 0, 12);
-        $aesIv = substr($sha1SnNn, 12, 8) . sha1($newNonce . $newNonce, true) . substr($newNonce, 0, 4);
+        $aesKey = self::tmpAesKey($newNonce, $serverNonce);
+        $aesIv = self::tmpAesIv($newNonce, $serverNonce);
 
         $plainDh = AesIge::decrypt($serverDhObj['encrypted_answer'], $aesKey, $aesIv);
-        $innerDh = self::decodeHashPrefixed($plainDh);
-        if ($innerDh[0]['_'] !== 'server_DH_inner_data') {
+        $innerDhObj = self::decodeHashPrefixed($plainDh);
+        if ($innerDhObj['_'] !== 'server_DH_inner_data') {
             throw new RuntimeException('AuthKeyFactory: bad server_DH_inner_data');
         }
-        if (!$innerDh[1]) {
-            throw new RuntimeException('AuthKeyFactory: server_DH_inner_data SHA1 prefix mismatch');
-        }
-        $innerDhObj = $innerDh[0];
 
         // --- Step 3: set_client_DH_params
         $g = new BigInteger((string)$innerDhObj['g']);
@@ -216,20 +210,42 @@ class AuthKeyFactory
     }
 
     /**
-     * Decodes a SHA1-prefixed payload: SHA1(data) + data + 0-15 padding bytes.
-     *
-     * @return array{0: array<string, mixed>, 1: bool} [decoded object, hash verified]
+     * tmp_aes_key := SHA1(new_nonce + server_nonce) || substr(SHA1(server_nonce + new_nonce), 0, 12)
+     * (32 bytes; verified against the official sample handshake transcript).
      */
-    protected static function decodeHashPrefixed(string $buffer): array
+    public static function tmpAesKey(string $newNonce, string $serverNonce): string
+    {
+        return sha1($newNonce . $serverNonce, true) . substr(sha1($serverNonce . $newNonce, true), 0, 12);
+    }
+
+    /**
+     * tmp_aes_iv := substr(SHA1(server_nonce + new_nonce), 12, 8) || SHA1(new_nonce + new_nonce)
+     *              || substr(new_nonce, 0, 4)  (32 bytes; transcript-verified).
+     */
+    public static function tmpAesIv(string $newNonce, string $serverNonce): string
+    {
+        $sha1SnNn = sha1($serverNonce . $newNonce, true);
+        return substr($sha1SnNn, 12, 8) . sha1($newNonce . $newNonce, true) . substr($newNonce, 0, 4);
+    }
+
+    /**
+     * Decodes a SHA1-prefixed payload: SHA1(data) + data + 0-15 padding bytes.
+     * Throws when the SHA1 prefix does not cover the decoded object.
+     *
+     * @return array<string, mixed> the decoded object
+     */
+    public static function decodeHashPrefixed(string $buffer): array
     {
         if (strlen($buffer) < 20) {
             throw new RuntimeException('AuthKeyFactory: hash-prefixed buffer too short');
         }
         $offset = 20;
         $object = TLDecoder::decodeObject($buffer, $offset);
-        $hashOk = hash_equals(substr($buffer, 0, 20), sha1(substr($buffer, 20, $offset - 20), true));
+        if (!hash_equals(substr($buffer, 0, 20), sha1(substr($buffer, 20, $offset - 20), true))) {
+            throw new RuntimeException('AuthKeyFactory: SHA1 prefix mismatch');
+        }
 
-        return [$object, $hashOk];
+        return $object;
     }
 
     /**
