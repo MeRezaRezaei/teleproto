@@ -183,7 +183,7 @@ class TLRegistry
         // layer-drift decode misalignment wholesale (found live: stale
         // documentAttributeVideo fields overrunning into string bytes).
         foreach (['api_full.tl', 'mtproto_full.tl'] as $file) {
-            $path = __DIR__ . '/../../schema/sources/' . $file;
+            $path = __DIR__ . '/../../../schema/sources/' . $file;
             if (!is_file($path)) {
                 continue;
             }
@@ -192,12 +192,19 @@ class TLRegistry
                 if ($line === '' || $line[0] === '/' || str_starts_with($line, '---')) {
                     continue;
                 }
-                if (!str_contains($line, '#')) {
-                    continue; // id-less cosmetic lines: curated SCHEMA owns them
+                if (!str_contains($line, '#') || str_contains($line, '{')) {
+                    // id-less cosmetic lines: curated SCHEMA owns them;
+                    // brace `{X:Type}` generic wrappers are hand-built at call sites.
+                    continue;
+                }
+                $mirrorName = substr($line, 0, (int) strpos($line, '#'));
+                if (isset(static::$ids[$mirrorName])) {
+                    continue; // curated SCHEMA / UserScopeSchema win; mirror only fills gaps
                 }
                 try {
                     self::register($line);
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    if (getenv('TL_BOOT_DEBUG')) { @file_put_contents('/tmp/opencode/tl-skipped.log', $line . ' ||| ' . $e->getMessage() . "\n", FILE_APPEND); }
                     continue; // generic wrapper lines ({X:Type}) are hand-built at call sites
                 }
             }
