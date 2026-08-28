@@ -44,6 +44,9 @@ class PacketCodec
      * @param int $seqNo Message sequence number
      * @param int $serverTimeDelta Timestamp delta in seconds
      * @param bool $toServer Whether packet is being sent to Telegram server (true) or to client (false)
+     * @param int|null $messageId Optional explicit message id (encrypted client content
+     *                            messages use ids ≡ 1 mod 4); null keeps the internally
+     *                            generated id (≡ 0 mod 4, plain-message convention)
      * @return string Encrypted binary packet ready for TCP socket
      */
     public static function encryptPacket(
@@ -53,10 +56,11 @@ class PacketCodec
         int $serverSalt = 0,
         int $seqNo = 0,
         int $serverTimeDelta = 0,
-        bool $toServer = true
+        bool $toServer = true,
+        ?int $messageId = null
     ): string {
         $authKeyId = self::computeAuthKeyId($authKey);
-        $messageId = self::generateMessageId($serverTimeDelta);
+        $messageId = $messageId ?? self::generateMessageId($serverTimeDelta);
 
         // 1. Build unencrypted message inner data
         $msgData = pack('P', $serverSalt);
