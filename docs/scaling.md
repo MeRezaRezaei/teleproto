@@ -98,9 +98,11 @@ Updates are delivered **synchronously** to your sink inside the polling loop:
 ```php
 interface UpdateSinkInterface
 {
-    public function handle(array $update, ?string $source = null): void;
+    public function handle(array $update, ?string $source = null): bool;
 }
 ```
+
+Returning `false` is a **not-now / skip refusal** — the sink signaling backpressure. When `handle()` returns `false`, the poller skips the inline `onUpdate` callback for that update (the update is already consumed by the sink's refusal, not re-delivered). Do not throw to refuse softly; return `false` and let your pipeline decide (drop, retry, defer).
 
 There is no internal buffer: a sink that blocks (heavy DB work, synchronous HTTP) stalls that account's whole loop — polling pauses, and backoff only covers Telegram errors, not slow sinks. Keep `handle()` fast and hand off: write to a Redis Stream / queue and let workers do the heavy lifting. That is what the contract exists for: it is the single seam where your pipeline plugs in, and the single place you must not be slow.
 

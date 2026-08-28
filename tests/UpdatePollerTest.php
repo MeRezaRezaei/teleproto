@@ -9,7 +9,6 @@ use PHPUnit\Framework\TestCase;
 use Illuminate\Container\Container;
 use Illuminate\Events\Dispatcher as EventsDispatcher;
 use Illuminate\Support\Facades\Event;
-use MeRezaRezaei\Teleproto\Exceptions\FloodWaitException;
 use MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException as RpcFloodWaitException;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Client as MTProtoClient;
