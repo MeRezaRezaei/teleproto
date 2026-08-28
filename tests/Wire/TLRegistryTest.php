@@ -115,6 +115,16 @@ class TLRegistryTest extends TestCase
         $this->assertSame(TLRegistry::VECTOR, TLRegistry::crc32Canonical('vector t:Type # [ t ] = Vector t'));
     }
 
+    public function testSignatureOfReturnsParsedStructWithCache(): void
+    {
+        $sig = TLRegistry::signatureOf('auth.sendCode');
+        $this->assertSame('auth.sendCode', $sig->name);
+        $this->assertSame(0xa677244f, $sig->id);
+        $this->assertSame('phone_number', $sig->fields[0]['name']);
+        // second call returns the SAME instance (parsed once)
+        $this->assertSame($sig, TLRegistry::signatureOf('auth.sendCode'));
+    }
+
     public function testUserScopeSchemaRegistersResponseConstructors(): void
     {
         // Presence checks for response-side constructors proven live against

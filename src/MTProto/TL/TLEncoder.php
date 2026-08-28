@@ -11,38 +11,37 @@ class TLEncoder
     public static function encodeObject(string $constructor, array $args): string
     {
         $bin = TLSerializer::packInt(TLRegistry::id($constructor));
-        $signature = TLRegistry::signature($constructor);
-        $fields = self::fieldsOf($signature);
+        $fields = TLRegistry::signatureOf($constructor)->fields;
         $flagWords = [];
         // First pass: auto-compute flag bits from present arguments, while preserving any explicit flags passed
-        foreach ($fields as [$fieldName, $fieldType]) {
-            if ($fieldType === 'flags' || $fieldType === '#') {
-                $flagWords[$fieldName] = (int)($args[$fieldName] ?? 0);
+        foreach ($fields as $field) {
+            if ($field['type'] === 'flags' || $field['type'] === '#') {
+                $flagWords[$field['name']] = (int)($args[$field['name']] ?? 0);
             }
         }
-        foreach ($fields as [$fieldName, $fieldType]) {
-            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m)) {
-                $flagName = $m[1];
-                $bit = 1 << (int)$m[2];
-                if (array_key_exists($fieldName, $args) && $args[$fieldName] !== null && $args[$fieldName] !== false) {
-                    $flagWords[$flagName] = ($flagWords[$flagName] ?? 0) | $bit;
+        foreach ($fields as $field) {
+            if ($field['flagWord'] !== null) {
+                if (array_key_exists($field['name'], $args) && $args[$field['name']] !== null && $args[$field['name']] !== false) {
+                    $flagWords[$field['flagWord']] = ($flagWords[$field['flagWord']] ?? 0) | (1 << $field['bit']);
                 }
             }
         }
-        foreach ($fields as [$fieldName, $fieldType]) {
+        foreach ($fields as $field) {
+            $fieldName = $field['name'];
+            $fieldType = $field['type'];
             if ($fieldType === 'flags' || $fieldType === '#') {
                 $bin .= TLSerializer::packInt($flagWords[$fieldName]);
                 continue;
             }
-            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m) && isset($flagWords[$m[1]])) {
+            if ($field['flagWord'] !== null && isset($flagWords[$field['flagWord']])) {
                 if (!array_key_exists($fieldName, $args) || $args[$fieldName] === null) {
                     continue; // bit clear: field absent from the wire
                 }
-                $bit = 1 << (int)$m[2];
-                if (($flagWords[$m[1]] & $bit) === 0) {
-                    throw new RuntimeException("TLEncoder: field '{$fieldName}' for {$constructor} is set but {$m[1]} bit {$m[2]} is not");
+                $bit = 1 << $field['bit'];
+                if (($flagWords[$field['flagWord']] & $bit) === 0) {
+                    throw new RuntimeException("TLEncoder: field '{$fieldName}' for {$constructor} is set but {$field['flagWord']} bit {$field['bit']} is not");
                 }
-                $bin .= self::encodeValue($m[3], $args[$fieldName]);
+                $bin .= self::encodeValue($fieldType, $args[$fieldName]);
                 continue;
             }
             if (!array_key_exists($fieldName, $args)) {
@@ -72,25 +71,20 @@ class TLEncoder
     }
 
     /**
+     * BC wrapper kept for tests and external callers: [name, type] pairs in
+     * schema order, derived from the same parser the registry caches from.
+     * Conditional types render back as `flagWord.N?Type` for readability.
+     *
      * @return list<array{0: string, 1: string}> [name, type] pairs in schema order
      */
     public static function fieldsOf(string $signature): array
     {
-        // "name#id f1:t1 f2:t2 = Type" (id optional)
-        $body = preg_replace('/^[A-Za-z0-9_.]+(#[0-9a-fA-F]+)?\s*/', '', $signature);
-        $body = trim(explode('=', (string)$body)[0]);
         $fields = [];
-        if ($body === '') {
-            return $fields;
-        }
-        // Canonical strings use the bare form `field:Vector t`; normalize to `field:Vector<t>`.
-        $body = (string)preg_replace('/:Vector ([A-Za-z0-9_.]+)(?=\s|$)/', ':Vector<$1>', $body);
-        foreach (explode(' ', $body) as $token) {
-            [$name, $type] = explode(':', $token, 2);
-            if ($type === 'Type') {
-                continue; // generic declaration (canonical brace-less `{X:Type}`), not a wire field
-            }
-            $fields[] = [$name, $type];
+        foreach (TLSignatureParser::parse($signature)->fields as $field) {
+            $type = $field['flagWord'] !== null
+                ? $field['flagWord'] . '.' . $field['bit'] . '?' . $field['type']
+                : $field['type'];
+            $fields[] = [$field['name'], $type];
         }
         return $fields;
     }

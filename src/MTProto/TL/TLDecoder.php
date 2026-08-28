@@ -9,7 +9,7 @@ use RuntimeException;
 /**
  * Mirror of TLEncoder: schema-driven generic TL object decoder.
  * Reads the constructor id, resolves it via TLRegistry::nameOf, then decodes
- * each field of TLEncoder::fieldsOf(signature) in order.
+ * each field of TLRegistry::signatureOf(name)->fields in order.
  */
 class TLDecoder
 {
@@ -42,17 +42,19 @@ class TLDecoder
 
         $result = ['_' => $name];
         $flagWords = [];
-        foreach (TLEncoder::fieldsOf(TLRegistry::signature($name)) as [$fieldName, $fieldType]) {
+        foreach (TLRegistry::signatureOf($name)->fields as $field) {
+            $fieldName = $field['name'];
+            $fieldType = $field['type'];
             if ($fieldType === 'flags' || $fieldType === '#') {
                 $flagWords[$fieldName] = TLSerializer::unpackInt($data, $offset);
                 $result[$fieldName] = $flagWords[$fieldName];
                 continue;
             }
-            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m) && isset($flagWords[$m[1]])) {
-                if (($flagWords[$m[1]] & (1 << (int)$m[2])) === 0) {
+            if ($field['flagWord'] !== null && isset($flagWords[$field['flagWord']])) {
+                if (($flagWords[$field['flagWord']] & (1 << $field['bit'])) === 0) {
                     continue; // bit clear: field absent from the wire
                 }
-                $result[$fieldName] = self::decodeValue($m[3], $data, $offset);
+                $result[$fieldName] = self::decodeValue($fieldType, $data, $offset);
                 continue;
             }
             $result[$fieldName] = self::decodeValue($fieldType, $data, $offset);

@@ -30,6 +30,9 @@ class TLRegistry
     /** @var array<string, string> name => canonical line */
     protected static array $signatures = [];
 
+    /** @var array<string, ParsedSignature> name => parse-once cached struct */
+    protected static array $parsed = [];
+
     protected static bool $booted = false;
 
     public const SCHEMA = [
@@ -136,17 +139,81 @@ class TLRegistry
     public static function register(string $canonicalLine): void
     {
         self::boot(); // seeding must not depend on call order: register-before-lookup still seeds SCHEMA
-        if (!preg_match('/^([A-Za-z0-9_.]+)#([0-9a-fA-F]{1,8})\b/', $canonicalLine, $m)) {
-            // Line without explicit id: compute from the full canonical string.
-            $name = trim(explode(' ', $canonicalLine)[0]);
-            $id = self::crc32Canonical($canonicalLine);
-        } else {
-            $name = $m[1];
-            $id = (int)hexdec(str_pad($m[2], 8, '0', STR_PAD_LEFT));
-        }
+        // Generic wrapper lines (`invokeWithLayer`, `initConnection`) carry brace-less
+        // `{X:Type}` declarations and `!X` result tokens that are outside the tokenizer
+        // grammar; they get a hand-built degraded struct instead (see parseGenericWrapper).
+        $parsed = str_contains($canonicalLine, 'X:Type')
+            ? self::parseGenericWrapper($canonicalLine)
+            : self::parseStrictly($canonicalLine);
+        $name = $parsed->name;
+        $id = $parsed->hasExplicitId ? $parsed->id : self::crc32Canonical($canonicalLine);
+        static::$parsed[$name] = $parsed;
         static::$ids[$name] = $id;
         static::$names[$id] = $name;
         static::$signatures[$name] = $canonicalLine;
+    }
+
+    private static function parseStrictly(string $canonicalLine): ParsedSignature
+    {
+        try {
+            return TLSignatureParser::parse($canonicalLine);
+        } catch (InvalidArgumentException $e) {
+            // A malformed schema line (e.g. a generated UserScopeSchema line) must
+            // fail loudly at boot, naming the offending line.
+            throw new InvalidArgumentException(
+                "TLRegistry: malformed schema line '{$canonicalLine}': {$e->getMessage()}",
+                0,
+                $e,
+            );
+        }
+    }
+
+    /**
+     * Degraded parse for the two generic wrapper lines whose `!X`/`X:Type`
+     * tokens the tokenizer rejects. Field walk is byte-identical to what the
+     * regex-era fieldsOf produced for them: `X:Type` declarations are skipped,
+     * `!X` stays a plain (nested-object) type, conditionals decompose to
+     * flagWord/bit. String functions only — no regex.
+     *
+     * @return ParsedSignature
+     */
+    protected static function parseGenericWrapper(string $canonicalLine): ParsedSignature
+    {
+        $line = trim($canonicalLine);
+        $name = explode(' ', $line, 2)[0];
+        $id = 0;
+        $hasId = false;
+        $hash = strpos($name, '#');
+        if ($hash !== false) {
+            $id = (int) hexdec(substr($name, $hash + 1));
+            $name = substr($name, 0, $hash);
+            $hasId = true;
+        }
+        $equals = (int) strpos($line, '=');
+        $returnType = trim(substr($line, $equals + 1));
+        $body = trim(substr($line, strlen(explode(' ', $line, 2)[0]), $equals - strlen(explode(' ', $line, 2)[0])));
+
+        /** @var list<array{name: string, type: string, flagWord: string|null, bit: int|null}> $fields */
+        $fields = [];
+        if ($body !== '') {
+            foreach (explode(' ', $body) as $token) {
+                [$fieldName, $type] = explode(':', $token, 2);
+                if ($type === 'Type') {
+                    continue; // generic declaration (canonical brace-less `{X:Type}`), not a wire field
+                }
+                $flagWord = null;
+                $bit = null;
+                $question = strpos($type, '?');
+                if ($question !== false) {
+                    [$conditional, $type] = explode('?', $type, 2);
+                    [$flagWord, $bitDigits] = explode('.', $conditional, 2);
+                    $bit = (int) $bitDigits;
+                }
+                $fields[] = ['name' => $fieldName, 'type' => $type, 'flagWord' => $flagWord, 'bit' => $bit];
+            }
+        }
+
+        return new ParsedSignature($name, $id, $hasId, $fields, $returnType);
     }
 
     public static function id(string $constructorName): int
@@ -165,6 +232,16 @@ class TLRegistry
             throw new InvalidArgumentException("TLRegistry: unknown constructor '{$constructorName}'");
         }
         return static::$signatures[$constructorName];
+    }
+
+    /**
+     * Parse-once cached struct for a registered constructor. Repeated calls
+     * return the same immutable ParsedSignature instance.
+     */
+    public static function signatureOf(string $name): ParsedSignature
+    {
+        self::boot();
+        return static::$parsed[$name] ?? throw new InvalidArgumentException("TLRegistry: unknown constructor '{$name}'");
     }
 
     public static function nameOf(int $id): ?string
