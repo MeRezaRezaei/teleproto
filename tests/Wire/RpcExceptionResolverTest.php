@@ -117,6 +117,30 @@ class RpcExceptionResolverTest extends TestCase
         $this->assertStringContainsString('smaller than 5', $e->getMessage());
     }
 
+    /**
+     * sscanf %d admits sign/whitespace variants ('FLOOD_WAIT_-5', 'FLOOD_WAIT_ 5')
+     * that the pre-regex anchored matching rejected; matching must stay
+     * digit-strict — they fall through to the generic RpcErrorException.
+     */
+    public function testFloodWaitMatchingIsDigitStrict(): void
+    {
+        foreach (['FLOOD_WAIT_-5', 'FLOOD_WAIT_ 5', 'FLOOD_PREMIUM_WAIT_-3'] as $msg) {
+            $e = RpcExceptionResolver::resolve($msg, 420);
+            $this->assertInstanceOf(RpcErrorException::class, $e, $msg);
+            $this->assertNotInstanceOf(FloodWaitException::class, $e, $msg);
+            $this->assertSame($msg, $e->rpcErrorMessage, $msg);
+        }
+    }
+
+    public function testMigrationMatchingIsDigitStrict(): void
+    {
+        // 'USER_MIGRATE_ 4': %d skips the space and would accept dc 4
+        $e = RpcExceptionResolver::resolve('USER_MIGRATE_ 4');
+        $this->assertInstanceOf(RpcErrorException::class, $e);
+        $this->assertNotInstanceOf(DcMigrationException::class, $e);
+        $this->assertSame('USER_MIGRATE_ 4', $e->rpcErrorMessage);
+    }
+
     public function testParameterizedMatchesWorkWithoutRegex(): void
     {
         // sanity: numeric template does hit the catalog

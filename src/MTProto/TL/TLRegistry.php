@@ -214,10 +214,19 @@ class TLRegistry
     public static function register(string $canonicalLine): void
     {
         self::boot(); // seeding must not depend on call order: register-before-lookup still seeds SCHEMA
-        // Generic wrapper lines (`invokeWithLayer`, `initConnection`) carry brace-less
-        // `{X:Type}` declarations and `!X` result tokens that are outside the tokenizer
+        // Generic wrapper routing is NAME-based ('invokeWithLayer',
+        // 'initConnection'); an 'X:Type' substring test false-positives on
+        // tokens like `maxX:Type`. Wrapper lines carry brace-less `{X:Type}`
+        // declarations and `!X` result tokens that are outside the tokenizer
         // grammar; they get a hand-built degraded struct instead (see parseGenericWrapper).
-        $parsed = str_contains($canonicalLine, 'X:Type')
+        $constructorName = self::constructorNameOf($canonicalLine);
+        $isWrapper = $constructorName === 'invokeWithLayer' || $constructorName === 'initConnection';
+        if ($isWrapper && !str_contains($canonicalLine, 'X:Type')) {
+            throw new InvalidArgumentException(
+                "TLRegistry: wrapper line '{$constructorName}' is missing its X:Type generic declaration: {$canonicalLine}"
+            );
+        }
+        $parsed = $isWrapper
             ? self::parseGenericWrapper($canonicalLine)
             : self::parseStrictly($canonicalLine);
         $name = $parsed->name;
@@ -226,6 +235,19 @@ class TLRegistry
         static::$ids[$name] = $id;
         static::$names[$id] = $name;
         static::$signatures[$name] = $canonicalLine;
+    }
+
+    /**
+     * Constructor name of a canonical line: the first space-delimited token
+     * with any `#id` suffix stripped. String functions only — no regex.
+     */
+    private static function constructorNameOf(string $canonicalLine): string
+    {
+        $line = ltrim($canonicalLine);
+        $space = strpos($line, ' ');
+        $firstToken = $space === false ? $line : substr($line, 0, $space);
+        $hash = strpos($firstToken, '#');
+        return $hash === false ? $firstToken : substr($firstToken, 0, $hash);
     }
 
     private static function parseStrictly(string $canonicalLine): ParsedSignature
@@ -264,7 +286,10 @@ class TLRegistry
             $name = substr($name, 0, $hash);
             $hasId = true;
         }
-        $equals = (int) strpos($line, '=');
+        $equals = strpos($line, '=');
+        if ($equals === false) {
+            throw new InvalidArgumentException("TLRegistry: degraded wrapper line missing '=': {$canonicalLine}");
+        }
         $returnType = trim(substr($line, $equals + 1));
         $body = trim(substr($line, strlen(explode(' ', $line, 2)[0]), $equals - strlen(explode(' ', $line, 2)[0])));
 

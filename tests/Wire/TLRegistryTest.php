@@ -125,6 +125,36 @@ class TLRegistryTest extends TestCase
         $this->assertSame($sig, TLRegistry::signatureOf('auth.sendCode'));
     }
 
+    /**
+     * Wrapper routing must follow the constructor NAME ('invokeWithLayer',
+     * 'initConnection'), never an 'X:Type' substring: the maxX:Type token
+     * contains the substring and would hijack the whole line into the
+     * degraded wrapper walk, which keeps `flags.0?Type` conditionals as
+     * wire fields the strict tokenizer correctly skips as declarations.
+     */
+    public function testWrapperRoutingIsNameBasedNotXTypeSubstring(): void
+    {
+        TLRegistry::register('trapCond#5a5a5a5c maxX:Type val:flags.0?Type = TrapCond');
+        $this->assertSame([], TLRegistry::signatureOf('trapCond')->fields);
+    }
+
+    public function testWrapperNameWithoutXTypeDeclarationIsRejected(): void
+    {
+        // secondary assertion: the name routes to the degraded parse, which
+        // only makes sense for generic wrapper lines declaring X:Type
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('X:Type');
+        TLRegistry::register('initConnection api_id:int = X');
+    }
+
+    public function testDegradedWrapperLineMissingEqualsThrows(): void
+    {
+        // (int) strpos-cast of false used to garbage-parse silently
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("degraded wrapper line missing '='");
+        TLRegistry::register('invokeWithLayer X:Type layer:int query:!X');
+    }
+
     public function testUserScopeSchemaRegistersResponseConstructors(): void
     {
         // Presence checks for response-side constructors proven live against

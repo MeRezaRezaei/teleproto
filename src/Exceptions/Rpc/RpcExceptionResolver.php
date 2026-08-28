@@ -69,12 +69,14 @@ final class RpcExceptionResolver
     {
         $message = strtoupper(trim($errorMessage));
 
-        // FLOOD_WAIT_X / FLOOD_PREMIUM_WAIT_X — sscanf, no regex
-        // (trailing %c rejects any suffix; count 1 = exactly one int consumed)
+        // FLOOD_WAIT_X / FLOOD_PREMIUM_WAIT_X — sscanf + digit-strict tail, no regex
+        // (tailIsDigits rejects '-5'/' 5' sign/whitespace variants %d would admit;
+        // trailing %c rejects any suffix; count 1 = exactly one int consumed)
         $seconds = 0;
         $c = "\0";
-        foreach (['FLOOD_WAIT_%d', 'FLOOD_PREMIUM_WAIT_%d'] as $fmt) {
-            if (sscanf($message, $fmt . '%c', $seconds, $c) === 1) {
+        foreach (['FLOOD_WAIT_', 'FLOOD_PREMIUM_WAIT_'] as $pfx) {
+            if (self::tailIsDigits($message, $pfx)
+                && sscanf($message, $pfx . '%d%c', $seconds, $c) === 1) {
                 return new FloodWaitException($seconds, $message, $errorCode);
             }
         }
@@ -83,7 +85,7 @@ final class RpcExceptionResolver
         $dc = 0;
         $c = "\0";
         foreach (['FILE_MIGRATE_', 'PHONE_MIGRATE_', 'NETWORK_MIGRATE_', 'USER_MIGRATE_'] as $pfx) {
-            if (str_starts_with($message, $pfx)
+            if (self::tailIsDigits($message, $pfx)
                 && sscanf($message, $pfx . '%d%c', $dc, $c) === 1
                 && $dc > 0 && $dc <= 5) {
                 return new DcMigrationException(
@@ -129,6 +131,20 @@ final class RpcExceptionResolver
         }
 
         return new RpcErrorException($message, $effectiveCode, $hint, $method);
+    }
+
+    /**
+     * True when $message is exactly $prefix followed by one or more ASCII
+     * digits — sscanf %d alone would also admit sign/whitespace variants
+     * ('..._-5', '..._ 5') that the pre-regex anchored matching rejected.
+     */
+    private static function tailIsDigits(string $message, string $prefix): bool
+    {
+        if (!str_starts_with($message, $prefix)) {
+            return false;
+        }
+        $tail = substr($message, strlen($prefix));
+        return $tail !== '' && strspn($tail, '0123456789') === strlen($tail);
     }
 
     /**
