@@ -92,7 +92,11 @@ $renderUsage = static function (TelegramMethod $m) use ($groupOf, $accessorOf, $
     }
     $lines[] = '    ->toRequest();';
     $lines[] = '';
-    $lines[] = '$result = TeleprotoClient::dispatch($request);';
+    // dispatch() is an INSTANCE method on TeleprotoClient (it resolves the
+    // transport per method: 'mtproto' -> user(), 'bot-http' -> bot()), so the
+    // example must construct/resolve a client first — never a static call.
+    $lines[] = '$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);   // or: new TeleprotoClient(apiId: …, apiHash: …)';
+    $lines[] = '$result = $client->dispatch($request);';
 
     return $lines;
 };
@@ -172,7 +176,11 @@ if (! is_dir($outDir) && ! mkdir($outDir, 0777, true) && ! is_dir($outDir)) {
     exit(1);
 }
 
-$count = 0;
+// Validate the whole curated list BEFORE touching the filesystem, then
+// mirror the builders' wipe: prune *.md files left over from a previous
+// curated set so renamed/removed methods cannot linger as stale pages.
+$methods = [];
+$expected = [];
 foreach (['mtproto', 'bot-http'] as $api) {
     foreach ($curated[$api] as $name) {
         $name = (string) $name;
@@ -181,9 +189,23 @@ foreach (['mtproto', 'bot-http'] as $api) {
             fwrite(STDERR, "Method [{$name}] expected in [{$api}] but lives in [{$method->api}].\n");
             exit(1);
         }
-        file_put_contents($outDir . '/' . $name . '.md', $render($method));
-        $count++;
+        $methods[] = $method;
+        $expected[$name . '.md'] = true;
     }
 }
 
-printf("written: %d skill files to %s\n", $count, $outDir);
+$pruned = 0;
+foreach (scandir($outDir) as $entry) {
+    if (str_ends_with($entry, '.md') && ! isset($expected[$entry])) {
+        unlink($outDir . '/' . $entry);
+        $pruned++;
+    }
+}
+
+$count = 0;
+foreach ($methods as $method) {
+    file_put_contents($outDir . '/' . $method->name . '.md', $render($method));
+    $count++;
+}
+
+printf("written: %d skill files to %s (pruned %d stale)\n", $count, $outDir, $pruned);

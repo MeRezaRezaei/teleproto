@@ -77,6 +77,13 @@ class SkillFilesTest extends TestCase
         $this->assertStringContainsString("->message('text')", $md);
         $this->assertStringContainsString('->randomId(123)', $md);
         $this->assertStringContainsString('->toRequest();', $md);
-        $this->assertStringContainsString('TeleprotoClient::dispatch($request);', $md);
+        // dispatch() is an INSTANCE method: the example must resolve a client
+        // and call it instance-style — never the fatal static form.
+        $this->assertStringContainsString(
+            '$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);',
+            $md
+        );
+        $this->assertStringContainsString('$result = $client->dispatch($request);', $md);
+        $this->assertStringNotContainsString('TeleprotoClient::dispatch', $md);
     }
 }

@@ -37,5 +37,6 @@ $request = Methods::auth()->exportLoginToken()
     ->exceptIds(['_' => '…'])
     ->toRequest();
 
-$result = TeleprotoClient::dispatch($request);
+$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);   // or: new TeleprotoClient(apiId: …, apiHash: …)
+$result = $client->dispatch($request);
 ```

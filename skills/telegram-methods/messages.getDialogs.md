@@ -42,5 +42,6 @@ $request = Methods::messages()->getDialogs()
     ->offsetPeer(['_' => '…'])
     ->toRequest();
 
-$result = TeleprotoClient::dispatch($request);
+$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);   // or: new TeleprotoClient(apiId: …, apiHash: …)
+$result = $client->dispatch($request);
 ```

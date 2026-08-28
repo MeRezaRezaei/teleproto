@@ -6,3 +6,5 @@ composer.lock
 
 .superpowers/
 .worktrees/
+schema/audit-report.md
+MadelineProto.log

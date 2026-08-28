@@ -65,6 +65,15 @@ Available commands:
   ./bin/teleproto me        Test and inspect your saved user session
   ./bin/teleproto test-e2e  Run full live end-to-end user/bot & exception test suite
 
+Schema workflow (maintainers):
+  1. Regenerate schema artifacts from local sources:
+       php bin/generate-method-schema.php && php bin/generate-botapi-schema.php
+  2. Audit / update against the live schema:
+       php artisan teleproto:schema-audit {--write}
+       php artisan teleproto:schema-update
+  3. Regenerate builders + skill files:
+       php bin/generate-method-builders.php && php bin/generate-skill-files.php
+
 HELP;
         break;
 }
