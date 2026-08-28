@@ -104,4 +104,21 @@ class RpcExceptionResolverTest extends TestCase
             $this->assertStringContainsString(':', $e->getMessage(), "{$msg} hint explains what to do");
         }
     }
+
+    public function testParameterizedMatchesWorkWithoutRegex(): void
+    {
+        // sanity: numeric template does hit the catalog
+        $this->assertNotNull(\MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorCatalog::lookup('SLOWMODE_WAIT_30'));
+
+        foreach (['FLOOD_WAIT_1', 'FLOOD_WAIT_999999', 'FLOOD_PREMIUM_WAIT_7'] as $msg) {
+            $this->assertStringContainsString('wait', RpcExceptionResolver::resolve($msg)->getMessage(), $msg);
+        }
+        foreach (['PHONE_MIGRATE_4', 'USER_MIGRATE_5', 'NETWORK_MIGRATE_1', 'FILE_MIGRATE_2'] as $msg) {
+            $this->assertInstanceOf(DcMigrationException::class, RpcExceptionResolver::resolve($msg), $msg);
+        }
+        // malformed variants must NOT match any template
+        $this->assertSame('FLOOD_WAIT_X', RpcExceptionResolver::resolve('FLOOD_WAIT_X')->rpcErrorMessage);
+        $this->assertSame('FLOOD_WAIT_', RpcExceptionResolver::resolve('FLOOD_WAIT_')->rpcErrorMessage);
+        $this->assertNull(\MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorCatalog::lookup('SLOWMODE_WAIT_3O')); // letter O, not zero
+    }
 }

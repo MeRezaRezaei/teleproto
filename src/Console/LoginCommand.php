@@ -34,7 +34,7 @@ class LoginCommand extends Command
         $apiId = (int) (config('teleproto.api_id') ?: text(
             'Telegram API ID',
             placeholder: 'from https://my.telegram.org',
-            validate: fn (string $v) => ctype_digit($v) && (int) $v > 0 ? null : 'API ID must be a positive integer.'
+            validate: fn (string $v) => ($v !== '' && strspn($v, '0123456789') === strlen($v) && (int) $v > 0) ? null : 'API ID must be a positive integer.'
         ));
         $apiHash = (string) (config('teleproto.api_hash') ?: text(
             'Telegram API Hash',
@@ -80,7 +80,7 @@ class LoginCommand extends Command
         $phone = (string) ($this->option('phone') ?: text(
             'Phone number (international)',
             placeholder: '+989123456789',
-            validate: fn (string $v) => preg_match('/^\+\d{8,15}$/', $v) ? null : 'Use full international format, e.g. +989123456789.'
+            validate: fn (string $v) => (\Illuminate\Support\Str::startsWith($v, '+') && strlen($v) > 8 && strspn(substr($v, 1), '0123456789') === strlen($v) - 1) ? null : 'Use full international format, e.g. +989123456789.'
         ));
         if (empty($phone)) {
             $this->components->error('Phone number cannot be empty.');

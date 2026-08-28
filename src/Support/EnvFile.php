@@ -17,16 +17,8 @@ final class EnvFile
         if (!file_exists($path)) {
             return [];
         }
-        $vars = [];
-        foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-            $line = trim($line);
-            if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-                continue;
-            }
-            [$k, $v] = explode('=', $line, 2);
-            $vars[trim($k)] = trim($v, " \t\n\r\0\x0B\"'");
-        }
-        return $vars;
+        $parsed = \Dotenv\Dotenv::parse((string) file_get_contents($path));
+        return array_map(strval(...), $parsed);
     }
 
     /**
@@ -34,12 +26,19 @@ final class EnvFile
      */
     public static function upsert(string $path, string $key, string $value): void
     {
-        $content = file_exists($path) ? (string) file_get_contents($path) : '';
-        if (preg_match("/^{$key}=.*/m", $content)) {
-            $content = (string) preg_replace("/^{$key}=.*/m", "{$key}=\"{$value}\"", $content);
-        } else {
-            $content .= (rtrim($content) !== '' ? "\n" : '') . "{$key}=\"{$value}\"\n";
+        $lines = file_exists($path) ? file($path, FILE_IGNORE_NEW_LINES) : [];
+        $prefix = $key . '=';
+        $found = false;
+        foreach ($lines as $i => $line) {
+            if (str_starts_with(ltrim($line), $prefix)) {
+                $lines[$i] = $key . '="' . $value . '"';
+                $found = true;
+                break;
+            }
         }
-        file_put_contents($path, $content);
+        if (!$found) {
+            $lines[] = $key . '="' . $value . '"';
+        }
+        file_put_contents($path, implode("\n", $lines) . "\n");
     }
 }

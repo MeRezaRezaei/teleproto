@@ -96,7 +96,8 @@ class EntityParser
                     $blockContent = implode('', array_slice($chars, $i, $closePos - $i));
                     if (str_contains($blockContent, "\n")) {
                         $firstLine = strstr($blockContent, "\n", true);
-                        if ($firstLine !== false && preg_match('/^[a-zA-Z0-9_-]+$/', $firstLine)) {
+                        $ok = $firstLine !== false && $firstLine !== '' && strspn($firstLine, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-') === strlen($firstLine);
+                        if ($ok) {
                             $lang = $firstLine;
                             $blockContent = substr($blockContent, strlen($firstLine) + 1);
                         }
