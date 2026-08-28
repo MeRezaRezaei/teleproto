@@ -27,13 +27,12 @@ class EncryptedConnection
     public const LAYER = 227;
 
     /**
-     * Transient push messages skipped while waiting for the rpc_result. These
-     * constructors are not part of TLRegistry, so they are detected by their
-     * official constructor ids: crc32('msgs_ack msg_ids:Vector long = MsgsAck')
-     * and crc32('new_session_created first_msg_id:long unique_id:long server_salt:long = NewSession').
+     * Transient push messages skipped while waiting for the rpc_result. Both
+     * constructors are registered in TLRegistry, so their ids are looked up
+     * there (msgs_ack msg_ids:Vector long = MsgsAck -> 0x62d6b459,
+     * new_session_created first_msg_id:long unique_id:long server_salt:long
+     * = NewSession -> 0x9ec20908) instead of being duplicated here.
      */
-    private const MSGS_ACK_ID = 0x62d6b459;
-    private const NEW_SESSION_CREATED_ID = 0x9ec20908;
     private const MAX_TRANSIENT_MESSAGES = 3;
 
     /** @var resource|null */
@@ -154,6 +153,17 @@ class EncryptedConnection
     }
 
     /**
+     * Transient push-message constructor ids (msgs_ack / new_session_created),
+     * sourced from TLRegistry so the ids exist in exactly one place.
+     *
+     * @return list<int>
+     */
+    protected static function transientConstructorIds(): array
+    {
+        return [TLRegistry::id('msgs_ack'), TLRegistry::id('new_session_created')];
+    }
+
+    /**
      * Reads encrypted frames until a non-transient message arrives; skips at most
      * MAX_TRANSIENT_MESSAGES consecutive msgs_ack / new_session_created pushes.
      *
@@ -161,13 +171,14 @@ class EncryptedConnection
      */
     protected function receiveDecodedResponse(): array
     {
+        $transientIds = self::transientConstructorIds();
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
             $frame = FrameCodec::receiveMessage($this->socket);
             $msg = PacketCodec::decryptPacket($frame, $this->session->authKey);
             $payload = $msg['payload'];
 
             $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
-            if ($id === self::MSGS_ACK_ID || $id === self::NEW_SESSION_CREATED_ID) {
+            if (in_array($id, $transientIds, true)) {
                 continue; // transient push, keep reading
             }
 

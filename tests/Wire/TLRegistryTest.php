@@ -37,9 +37,40 @@ class TLRegistryTest extends TestCase
             'gzip_packed' => 0x3072cfa1,
             'invokeWithLayer' => 0xda9b0d0d,
             'help.getNearestDc' => 0x1fb33026,
+            // Response-side constructors the wire path can genuinely receive.
+            // Provenance: nearestDc from core.telegram.org/method/help.getNearestDc
+            // (nearestDc#8e1a1775); handshake rejection constructors from
+            // core.telegram.org/mtproto/auth_key (server_DH_params_fail#c285e6a4,
+            // dh_gen_retry#46dc1fb9, dh_gen_fail#a69dae02); transient service
+            // messages from core.telegram.org/mtproto/service_messages
+            // (msgs_ack#62d6b459 — canonicalized brace-less `Vector long`, the
+            // registry's Vector<long> convention as for resPQ — and
+            // new_session_created#9ec20908).
+            'nearestDc' => 0x8e1a1775,
+            'server_DH_params_fail' => 0xc285e6a4,
+            'dh_gen_retry' => 0x46dc1fb9,
+            'dh_gen_fail' => 0xa69dae02,
+            'msgs_ack' => 0x62d6b459,
+            'new_session_created' => 0x9ec20908,
         ];
         foreach ($goldens as $name => $id) {
             $this->assertSame($id, TLRegistry::id($name), "constructor id mismatch for {$name}");
+        }
+    }
+
+    /**
+     * Guards the golden table against SCHEMA additions colliding with an
+     * existing id: a collision would clobber the id => name mapping and make
+     * nameOf() resolve one of the two names wrongly.
+     */
+    public function testGoldenIdsResolveBackToTheirOwnNames(): void
+    {
+        foreach ([
+            'nearestDc', 'server_DH_params_fail', 'dh_gen_retry', 'dh_gen_fail',
+            'msgs_ack', 'new_session_created',
+            'req_pq_multi', 'resPQ', 'rpc_result', 'gzip_packed', 'help.getNearestDc',
+        ] as $name) {
+            $this->assertSame($name, TLRegistry::nameOf(TLRegistry::id($name)), "id collision involving {$name}");
         }
     }
 

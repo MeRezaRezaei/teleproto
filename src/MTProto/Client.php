@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\MTProto;
 
+use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Connection\EncryptedConnection;
 use MeRezaRezaei\Teleproto\MTProto\Connection\PlainConnection;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\AesIge;
@@ -35,14 +36,15 @@ class Client
 
     protected ?SessionData $session = null;
     protected ?array $proxyConfig = null;
-    protected bool $live = false;
+    /** Tri-state: null = defer to config('teleproto.live_mode') at first use; true/false = explicit. */
+    private ?bool $live = null;
     private ?EncryptedConnection $conn = null;
 
     public function __construct(
         public int $apiId,
         public string $apiHash,
         ?SessionData $session = null,
-        bool $live = false
+        ?bool $live = null
     ) {
         $this->session = $session;
         $this->live = $live;
@@ -98,6 +100,26 @@ class Client
     }
 
     /**
+     * Resolves the tri-state live flag at first use: an explicit constructor
+     * value (or ->live()) wins; null defers to config('teleproto.live_mode')
+     * when running inside a Laravel app, else stays offline.
+     */
+    protected function isLive(): bool
+    {
+        return $this->live ??= $this->resolveLiveDefault();
+    }
+
+    /**
+     * config-if-available pattern (like TelegramWebhookController): the config()
+     * helper only exists inside a Laravel application, so outside one — CLI
+     * scripts, unit tests — the default resolves to offline.
+     */
+    protected function resolveLiveDefault(): bool
+    {
+        return function_exists('config') ? (bool) config('teleproto.live_mode') : false;
+    }
+
+    /**
      * Executes a raw MTProto RPC method.
      *
      * @param string $method MTProto method name (e.g. 'messages.sendMessage', 'users.getFullUser')
@@ -106,7 +128,7 @@ class Client
      */
     public function call(string $method, array $params = []): array
     {
-        if (!$this->live) {
+        if (!$this->isLive()) {
             if ($this->session === null || empty($this->session->authKey)) {
                 throw new RuntimeException("Session AuthKey is required to make authenticated MTProto calls.");
             }
@@ -120,7 +142,15 @@ class Client
             ];
         }
 
-        return $this->ensureConnection()->call($method, $params);
+        try {
+            return $this->ensureConnection()->call($method, $params);
+        } catch (TelegramException $e) {
+            throw $e; // RPC-level error: the connection stays usable
+        } catch (RuntimeException $e) {
+            // Transport/protocol failure: the cached connection is dead — evict, rethrow.
+            $this->close();
+            throw $e;
+        }
     }
 
     /**

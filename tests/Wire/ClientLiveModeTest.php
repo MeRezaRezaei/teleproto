@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\Tests\Wire;
 
+use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Client;
+use MeRezaRezaei\Teleproto\MTProto\Connection\EncryptedConnection;
+use MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
+use MeRezaRezaei\Teleproto\MTProto\TL\TLEncoder;
+use MeRezaRezaei\Teleproto\MTProto\Transport\FrameCodec;
 use PHPUnit\Framework\TestCase;
 
 class ClientLiveModeTest extends TestCase
@@ -17,6 +22,45 @@ class ClientLiveModeTest extends TestCase
         $res = $client->call('help.getNearestDc');
         $this->assertSame('rpc_result', $res['_']);
         $this->assertSame('help.getNearestDc', $res['method']);
+    }
+
+    public function testResolveLiveDefaultIsFalseWithoutLaravelContainer(): void
+    {
+        // config() only exists inside a Laravel app; the dev/test runtime here
+        // has no container, so the config-if-available default resolves false.
+        $client = new Client(apiId: 1, apiHash: 'h');
+
+        $resolve = new \ReflectionMethod(Client::class, 'resolveLiveDefault');
+        $this->assertFalse($resolve->invoke($client));
+    }
+
+    public function testConstructorNullLiveWithNoConfigStaysOffline(): void
+    {
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: null);
+
+        $res = $client->call('help.getNearestDc'); // must be the stub, not a socket
+        $this->assertSame('rpc_result', $res['_']);
+    }
+
+    public function testConstructorTrueForcesLiveWirePath(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
+        self::setConn($client, new EncryptedConnection($session, $clientSock));
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => 7,
+            'result' => ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2],
+        ]));
+
+        $res = $client->call('help.getNearestDc'); // live flag must use the wire, not the stub
+        $this->assertSame('nearestDc', $res['_']);
+        $this->assertSame(2, $res['this_dc']);
+
+        $client->close();
+        fclose($serverSock);
     }
 
     public function testLiveRequiresAuthKeyOrFailsFast(): void
@@ -55,6 +99,84 @@ class ClientLiveModeTest extends TestCase
 
         $this->assertNull(self::connOf($client), 'no connection may be cached after failure');
         $this->assertSame('', $session->authKey, 'failed handshake must not store a partial key');
+    }
+
+    public function testLiveRuntimeExceptionEvictsCachedConnection(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
+        self::setConn($client, new EncryptedConnection($session, $clientSock));
+
+        fclose($serverSock); // server side vanishes: the next call hits EOF
+
+        try {
+            $client->call('help.getNearestDc');
+            $this->fail('expected RuntimeException on a dead connection');
+        } catch (\RuntimeException $e) {
+            $this->assertNotInstanceOf(TelegramException::class, $e); // transport-level, not RPC
+        }
+
+        $this->assertNull(self::connOf($client), 'dead connection must be evicted (close + null)');
+    }
+
+    public function testLiveTelegramExceptionKeepsCachedConnection(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
+        self::setConn($client, new EncryptedConnection($session, $clientSock));
+
+        // rpc_error-encrypted canned response (same helper pattern as EncryptedConnectionTest)
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => 7,
+            'result' => ['_' => 'rpc_error', 'error_code' => 420, 'error_message' => 'SLOWMODE_WAIT_10'],
+        ]));
+
+        try {
+            $client->call('help.getNearestDc');
+            $this->fail('expected TelegramException on rpc_error');
+        } catch (TelegramException $e) {
+            $this->assertSame(420, $e->getCode());
+        }
+
+        $this->assertInstanceOf(EncryptedConnection::class, self::connOf($client), 'RPC-level error must keep the connection');
+
+        $client->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * @return array{0: resource, 1: resource}
+     */
+    private function socketPair(): array
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $this->assertNotFalse($pair);
+        return $pair;
+    }
+
+    /**
+     * Fake telegram pre-buffers one encrypted (server->client) framed response
+     * so the single-threaded call() write+read cannot deadlock.
+     */
+    private function seedFakeServerResponse($serverSock, string $authKey, string $payload): void
+    {
+        fwrite($serverSock, FrameCodec::wrapPayload(PacketCodec::encryptPacket(
+            payload: $payload,
+            authKey: $authKey,
+            sessionId: 0x5E5510A1,
+            serverSalt: 0x4242,
+            seqNo: 1,
+            toServer: false
+        )));
+    }
+
+    private static function setConn(Client $client, EncryptedConnection $conn): void
+    {
+        $prop = new \ReflectionProperty(Client::class, 'conn');
+        $prop->setValue($client, $conn);
     }
 
     private static function connOf(Client $client): mixed

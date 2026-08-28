@@ -10,6 +10,7 @@ use MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
 use MeRezaRezaei\Teleproto\MTProto\TL\TLDecoder;
 use MeRezaRezaei\Teleproto\MTProto\TL\TLEncoder;
+use MeRezaRezaei\Teleproto\MTProto\TL\TLRegistry;
 use MeRezaRezaei\Teleproto\MTProto\TL\TLSerializer;
 use MeRezaRezaei\Teleproto\MTProto\Transport\FrameCodec;
 use PHPUnit\Framework\TestCase;
@@ -17,8 +18,17 @@ use RuntimeException;
 
 class EncryptedConnectionTest extends TestCase
 {
-    private const NEW_SESSION_CREATED_ID = 0x9ec20908;
-    private const MSGS_ACK_ID = 0x62d6b459;
+    /**
+     * A real help.getNearestDc response payload (nearestDc#8e1a1775 is
+     * registered in TLRegistry) — canned results must be encodable AND
+     * decodable response constructors, never request names.
+     *
+     * @return array<string, mixed>
+     */
+    private static function nearestDcPayload(): array
+    {
+        return ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2];
+    }
 
     /**
      * invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X
@@ -68,7 +78,7 @@ class EncryptedConnectionTest extends TestCase
 
     public function testUnwrapResultIfGzippedReturnsPlainResultAsIs(): void
     {
-        $plain = ['_' => 'help.getNearestDc'];
+        $plain = self::nearestDcPayload();
         $this->assertSame($plain, EncryptedConnection::unwrapResultIfGzipped($plain));
     }
 
@@ -87,11 +97,11 @@ class EncryptedConnectionTest extends TestCase
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 0x1122334455667788,
-            'result' => ['_' => 'help.getNearestDc'],
+            'result' => self::nearestDcPayload(),
         ]));
 
         $result = $conn->call('help.getNearestDc');
-        $this->assertSame(['_' => 'help.getNearestDc'], $result);
+        $this->assertSame(self::nearestDcPayload(), $result);
 
         $req = $this->decryptFakeServerRequest($serverSock, $authKey);
         $this->assertSame(pack('V', 0xda9b0d0d), substr($req['payload'], 0, 4));
@@ -123,9 +133,9 @@ class EncryptedConnectionTest extends TestCase
             'error_code' => 48,
             'new_server_salt' => $newSalt,
         ]));
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedRpcResult('help.getNearestDc'));
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
 
-        $this->assertSame(['_' => 'help.getNearestDc'], $conn->call('help.getNearestDc'));
+        $this->assertSame(self::nearestDcPayload(), $conn->call('help.getNearestDc'));
 
         $first = $this->decryptFakeServerRequest($serverSock, $authKey);
         $second = $this->decryptFakeServerRequest($serverSock, $authKey);
@@ -173,11 +183,11 @@ class EncryptedConnectionTest extends TestCase
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 7,
             'result' => ['_' => 'gzip_packed', 'packed_data' => gzencode(
-                TLEncoder::encodeObject('help.getNearestDc', []), 9
+                TLEncoder::encodeObject('nearestDc', self::nearestDcPayload()), 9
             )],
         ]));
 
-        $this->assertSame(['_' => 'help.getNearestDc'], $conn->call('help.getNearestDc'));
+        $this->assertSame(self::nearestDcPayload(), $conn->call('help.getNearestDc'));
 
         $conn->close();
         fclose($serverSock);
@@ -192,13 +202,13 @@ class EncryptedConnectionTest extends TestCase
 
         // new_session_created first_msg_id:long unique_id:long server_salt:long
         $this->seedFakeServerResponse($serverSock, $authKey,
-            pack('V', self::NEW_SESSION_CREATED_ID) . pack('P', 1) . pack('P', 2) . pack('P', 3));
+            pack('V', TLRegistry::id('new_session_created')) . pack('P', 1) . pack('P', 2) . pack('P', 3));
         // msgs_ack msg_ids:Vector<long>
         $this->seedFakeServerResponse($serverSock, $authKey,
-            pack('V', self::MSGS_ACK_ID) . TLSerializer::packVector([111, 222], TLSerializer::packLong(...)));
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedRpcResult('help.getNearestDc'));
+            pack('V', TLRegistry::id('msgs_ack')) . TLSerializer::packVector([111, 222], TLSerializer::packLong(...)));
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
 
-        $this->assertSame(['_' => 'help.getNearestDc'], $conn->call('help.getNearestDc'));
+        $this->assertSame(self::nearestDcPayload(), $conn->call('help.getNearestDc'));
 
         $conn->close();
         fclose($serverSock);
@@ -211,7 +221,7 @@ class EncryptedConnectionTest extends TestCase
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $conn = new EncryptedConnection($session, $clientSock);
 
-        $msgsAck = pack('V', self::MSGS_ACK_ID) . TLSerializer::packVector([], TLSerializer::packLong(...));
+        $msgsAck = pack('V', TLRegistry::id('msgs_ack')) . TLSerializer::packVector([], TLSerializer::packLong(...));
         for ($i = 0; $i < 4; $i++) {
             $this->seedFakeServerResponse($serverSock, $authKey, $msgsAck);
         }
@@ -244,8 +254,8 @@ class EncryptedConnectionTest extends TestCase
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $conn = new EncryptedConnection($session, $clientSock);
 
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedRpcResult('help.getNearestDc'));
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedRpcResult('help.getNearestDc'));
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
 
         $conn->call('help.getNearestDc'); // first: invokeWithLayer-wrapped
         $conn->call('help.getConfig');    // second: bare constructor
@@ -312,11 +322,11 @@ class EncryptedConnectionTest extends TestCase
         );
     }
 
-    private function cannedRpcResult(string $constructor): string
+    private function cannedNearestDcResult(): string
     {
         return TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 7,
-            'result' => ['_' => $constructor],
+            'result' => self::nearestDcPayload(),
         ]);
     }
 }
