@@ -52,10 +52,25 @@ class RpcExceptionResolverTest extends TestCase
         $this->assertSame(500, $e->rpcErrorCode);
     }
 
-    public function testCatalogHintAttachedForKnownButUntypedErrors(): void
+    public function testDocumentedEntriesAreVerbatimFromTelegramDocs(): void
     {
-        $e = RpcExceptionResolver::resolve('PEER_ID_INVALID', 400);
-        $this->assertStringContainsString('peer', $e->getMessage());
+        // Spot-check official wording straight off the per-method tables:
+        $e = RpcExceptionResolver::resolve('PHONE_NUMBER_BANNED', 400);
+        $this->assertStringContainsString('banned from telegram', $e->getMessage());
+        $e = RpcExceptionResolver::resolve('PHONE_NUMBER_INVALID', 406);
+        $this->assertStringContainsString('The phone number is invalid', $e->getMessage());
+        $e = RpcExceptionResolver::resolve('SRP_ID_INVALID', 400);
+        $this->assertStringContainsString('Invalid SRP ID provided', $e->getMessage());
+        $e = RpcExceptionResolver::resolve('ACCESS_TOKEN_INVALID', 400);
+        $this->assertStringContainsString('Access token invalid', $e->getMessage());
+    }
+
+    public function testDocumentedEntryExposesDocsCodeAndDescription(): void
+    {
+        $entry = RpcExceptionResolver::documentedEntry('phone_code_expired');
+        $this->assertNotNull($entry);
+        $this->assertSame(400, $entry[0]);
+        $this->assertStringContainsString('expired', $entry[1]);
     }
 
     public function testTransportCodeMinus404MapsToAuthKeyUnknown(): void

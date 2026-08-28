@@ -5,18 +5,16 @@ declare(strict_types=1);
 namespace MeRezaRezaei\Teleproto\Exceptions\Rpc;
 
 /**
- * API_ID_INVALID / API_ID_PUBLISHED_FLOOD — the api_id/api_hash pair is
- * wrong or was published and abused.
- *
- * @see https://core.telegram.org/api/obtaining_api_id
+ * API_ID_* errors — descriptions verbatim from
+ * https://core.telegram.org/method/auth.sendCode#possible-errors
  */
 class ApiIdException extends RpcErrorException
 {
     public function __construct(string $rpcErrorMessage, int $rpcErrorCode)
     {
         $hint = $rpcErrorMessage === 'API_ID_PUBLISHED_FLOOD'
-            ? 'This api_id/api_hash pair was published and is flood-limited: obtain your own from my.telegram.org.'
-            : 'api_id/api_hash pair rejected: check the values from https://my.telegram.org.';
+            ? "This API id was published somewhere, you can't use it now. → Obtain your own api_id from my.telegram.org."
+            : 'API ID invalid. → Check the api_id/api_hash pair from my.telegram.org.';
         parent::__construct($rpcErrorMessage, $rpcErrorCode, $hint);
     }
 }
