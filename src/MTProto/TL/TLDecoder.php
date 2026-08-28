@@ -16,7 +16,7 @@ class TLDecoder
     /**
      * @param array<string, string> $contextTypes reserved for callers that know
      *        the expected type of a polymorphic field; unused for now.
-     * @return array<string, mixed> ['_' => constructorName, field => value, ...]
+     * @return array<string, mixed>|list<mixed> ['_' => constructorName, field => value, ...]
      */
     public static function decodeObject(string $data, int &$offset = 0, array $contextTypes = []): array
     {
@@ -24,6 +24,17 @@ class TLDecoder
             throw new RuntimeException(sprintf('TLDecoder: buffer underflow reading constructor id at offset %d', $offset));
         }
         $id = TLSerializer::unpackInt($data, $offset);
+
+        // Bare polymorphic Vector<T> (0x1cb5c415) at root level
+        if ($id === TLRegistry::VECTOR) {
+            $count = TLSerializer::unpackInt($data, $offset);
+            $items = [];
+            for ($i = 0; $i < $count; $i++) {
+                $items[] = self::decodeObject($data, $offset);
+            }
+            return $items;
+        }
+
         $name = TLRegistry::nameOf($id);
         if ($name === null) {
             throw new RuntimeException(sprintf('TLDecoder: unknown constructor id 0x%08x', $id));

@@ -23,14 +23,20 @@ if (!$session) {
 }
 
 try {
-    echo "Connecting to Telegram with saved session...\n";
-    $user = TP::fromSession($session, $apiId, $apiHash);
-    $me = $user->call('users.getFullUser', [
-        'id' => ['_' => 'inputUserSelf']
-    ]);
+    echo "Connecting to Telegram DC 4 with saved session...\n";
+    $client = new \MeRezaRezaei\Teleproto\Services\TeleprotoClient($apiId, $apiHash);
+    $user = $client->fromSession($session);
+    $user->mtproto->live();
 
-    echo "\nSession is VALID and LIVE!\n";
-    print_r($me);
+    $nearest = $user->call('help.getNearestDc');
+    echo "Live connection to Telegram verified! Nearest DC info:\n";
+    print_r($nearest);
+
+    $users = $user->call('users.getUsers', [
+        'id' => [['_' => 'inputUserSelf']]
+    ]);
+    echo "\nYour Telegram User Profile (Live via native MTProto Layer 227):\n";
+    print_r($users);
 } catch (Throwable $e) {
     fwrite(STDERR, "Session test failed: " . $e->getMessage() . "\n");
     exit(1);
