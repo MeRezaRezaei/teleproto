@@ -18,9 +18,8 @@ class TLDecoder
      *        the expected type of a polymorphic field; unused for now.
      * @return array<string, mixed> ['_' => constructorName, field => value, ...]
      */
-    public static function decodeObject(string $data, ?int &$offset = 0, array $contextTypes = []): array
+    public static function decodeObject(string $data, int &$offset = 0, array $contextTypes = []): array
     {
-        $offset ??= 0;
         if ($offset + 4 > strlen($data)) {
             throw new RuntimeException(sprintf('TLDecoder: buffer underflow reading constructor id at offset %d', $offset));
         }

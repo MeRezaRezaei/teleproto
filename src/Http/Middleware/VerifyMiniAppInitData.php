@@ -88,7 +88,7 @@ class VerifyMiniAppInitData
             return null;
         }
 
-        if (isset($params['user']) && is_string($params['user'])) {
+        if (isset($params['user'])) {
             return json_decode($params['user'], true) ?: null;
         }
 

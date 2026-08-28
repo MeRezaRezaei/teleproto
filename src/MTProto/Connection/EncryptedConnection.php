@@ -44,7 +44,7 @@ class EncryptedConnection
     protected int $lastMessageId = 0;
 
     /** @param resource|null $socket */
-    public function __construct(protected SessionData $session, $socket = null, protected int $apiId = 0)
+    final public function __construct(protected SessionData $session, $socket = null, protected int $apiId = 0)
     {
         $this->socket = $socket;
         $this->sessionId = (int)unpack('P', random_bytes(8))[1];

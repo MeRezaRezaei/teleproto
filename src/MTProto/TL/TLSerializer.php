@@ -55,9 +55,8 @@ class TLSerializer
             return $str;
         }
 
-        // Read 3-byte 24-bit length using standard 32-bit unpack
-        $lenBytes = substr($data, $offset, 3) . "\x00";
-        $len = unpack('V', $lenBytes)[1];
+        // Read 3-byte 24-bit little-endian length
+        $len = ord($data[$offset]) | (ord($data[$offset + 1]) << 8) | (ord($data[$offset + 2]) << 16);
         $offset += 3;
 
         $str = substr($data, $offset, $len);

@@ -35,6 +35,9 @@ class AesIge
             $block = substr($data, $i, 16);
             $xor = $block ^ $iv1;
             $encrypted = openssl_encrypt($xor, 'aes-256-ecb', $key, OPENSSL_RAW_DATA | OPENSSL_NO_PADDING);
+            if ($encrypted === false) {
+                throw new RuntimeException('AES-256-ECB encryption failed');
+            }
             $c = $encrypted ^ $iv2;
             $cipher .= $c;
             $iv1 = $c;
@@ -66,6 +69,9 @@ class AesIge
             $c = substr($cipher, $i, 16);
             $xor = $c ^ $iv2;
             $decrypted = openssl_decrypt($xor, 'aes-256-ecb', $key, OPENSSL_RAW_DATA | OPENSSL_NO_PADDING);
+            if ($decrypted === false) {
+                throw new RuntimeException('AES-256-ECB decryption failed');
+            }
             $p = $decrypted ^ $iv1;
             $plain .= $p;
             $iv1 = $c;

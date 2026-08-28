@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+### Added
+- Real MTProto 2.0 wire path: intermediate TCP framing (`FrameCodec`), auth-key DH handshake (`AuthKeyFactory`), encrypted RPC (`EncryptedConnection`) with gzip_packed + bad_server_salt handling.
+- `teleproto:doctor` live verification command (no Telegram account needed).
+- `TLRegistry`/`TLEncoder`/`TLDecoder` schema-driven TL engine with golden id vectors.
+- `PqFactorizer` (Pollard rho) with official doc vectors; live mode opt-in on `Client` (`->live()`).
+### Changed
+- `ext-zlib` now required; inert proxy context removed from `StreamSocket` (direct connections only until tunneling ships).
+- Live network verification is pending environment access; offline verification uses official transcript byte vectors.
+
+---
+
 ## [v1.0.0] - 2026-08-28
 
 ### ⚡ Highlights & Overview

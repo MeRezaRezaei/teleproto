@@ -15,7 +15,7 @@ class TelegramUpdateReceived
      * @param array<string, mixed> $update Raw Telegram Update object
      * @param string|null $botToken Bot token that received the update (if known)
      */
-    public function __construct(
+    final public function __construct(
         public array $update,
         public ?string $botToken = null
     ) {}

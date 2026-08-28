@@ -22,7 +22,7 @@ class PlainConnection
     public $socket;
 
     /** @param resource $socket */
-    public function __construct($socket)
+    final public function __construct($socket)
     {
         $this->socket = $socket;
     }

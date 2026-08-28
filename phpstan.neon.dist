@@ -1,0 +1,8 @@
+parameters:
+    level: 5
+    bootstrapFiles:
+        - phpstan/laravel-helpers.php
+    paths:
+        - src
+    excludePaths:
+        - src/MTProto/resources

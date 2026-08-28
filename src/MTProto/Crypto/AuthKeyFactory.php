@@ -58,7 +58,7 @@ class AuthKeyFactory
     {
         $der = self::pkcs1DerOf($pem);
         $decoded = ASN1::decodeBER($der);
-        if ($decoded === false) {
+        if ($decoded === null) {
             throw new RuntimeException('AuthKeyFactory: unable to decode RSA public key DER');
         }
         $mapped = ASN1::asn1map($decoded[0], Maps\RSAPublicKey::MAP);

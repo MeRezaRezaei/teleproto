@@ -78,7 +78,7 @@ class Client
      */
     public function openSocket()
     {
-        $dcId = $this->session?->dcId ?? 2;
+        $dcId = $this->session->dcId ?? 2;
         $host = self::DC_IPS[$dcId] ?? self::DC_IPS[2];
 
         return StreamSocket::createConnection(
@@ -193,7 +193,7 @@ class Client
     /** @return array{0: string, 1: int} */
     protected function resolveHost(): array
     {
-        $dcId = $this->session?->dcId ?? 2;
+        $dcId = $this->session->dcId ?? 2;
         return [self::DC_IPS[$dcId] ?? self::DC_IPS[2], self::DEFAULT_PORT];
     }
 

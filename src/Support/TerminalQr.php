@@ -37,9 +37,9 @@ class TerminalQr
 
                 if ($top && $bottom) {
                     $output .= '█'; // Both black
-                } elseif ($top && !$bottom) {
+                } elseif ($top) {
                     $output .= '▀'; // Top black, bottom white
-                } elseif (!$top && $bottom) {
+                } elseif ($bottom) {
                     $output .= '▄'; // Top white, bottom black
                 } else {
                     $output .= ' '; // Both white

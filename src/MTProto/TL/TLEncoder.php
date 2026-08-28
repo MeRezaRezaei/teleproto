@@ -69,7 +69,7 @@ class TLEncoder
         $body = preg_replace('/^[A-Za-z0-9_.]+(#[0-9a-fA-F]+)?\s*/', '', $signature);
         $body = trim(explode('=', (string)$body)[0]);
         $fields = [];
-        if ($body === '' || $body === null) {
+        if ($body === '') {
             return $fields;
         }
         // Canonical strings use the bare form `field:Vector t`; normalize to `field:Vector<t>`.
