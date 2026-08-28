@@ -367,7 +367,7 @@ class TeleprotoClientTest extends TestCase
         $authService = new \MeRezaRezaei\Teleproto\Services\TeleprotoAuthService(live: false);
 
         // 1. Phone code flow
-        $phoneRes = $authService->sendPhoneCode('+1234567890', 12345, 'hash123');
+        $phoneRes = $authService->sendPhoneCode('+1234567890', 12345, 'hash123', 2, new SessionData(dcId: 2, authKey: random_bytes(256)));
         $this->assertNotEmpty($phoneRes['phone_code_hash']);
         $this->assertInstanceOf(\MeRezaRezaei\Teleproto\MTProto\SessionData::class, $phoneRes['session']);
 
@@ -376,12 +376,12 @@ class TeleprotoClientTest extends TestCase
         $this->assertEquals('auth.signIn', $signInRes['method']);
 
         // 2. QR code export
-        $qrRes = $authService->exportQrLoginToken(12345, 'hash123');
+        $qrRes = $authService->exportQrLoginToken(12345, 'hash123', 2, new SessionData(dcId: 2, authKey: random_bytes(256)));
         $this->assertStringStartsWith('tg://login?token=', $qrRes['url']);
         $this->assertNotEmpty($qrRes['token']);
 
         // 3. Bot MTProto authorization
-        $botAuthRes = $authService->loginBot('123456:BOT-TOKEN', 12345, 'hash123');
+        $botAuthRes = $authService->loginBot('123456:BOT-TOKEN', 12345, 'hash123', 2, new SessionData(dcId: 2, authKey: random_bytes(256)));
         $this->assertEquals('rpc_result', $botAuthRes['raw']['_']);
         $this->assertEquals('auth.importBotAuthorization', $botAuthRes['raw']['method']);
     }

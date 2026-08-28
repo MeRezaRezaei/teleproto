@@ -53,7 +53,7 @@ class TeleprotoAuthService
         int $dcId = 2,
         ?SessionData $session = null
     ): array {
-        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
+        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: ''); // empty key: Client handshakes lazily
         $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
         $this->goLive($user);
 
@@ -128,7 +128,7 @@ class TeleprotoAuthService
         int $dcId = 2,
         ?SessionData $session = null
     ): array {
-        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
+        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: ''); // empty key: Client handshakes lazily
         $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
         $this->goLive($user);
 
@@ -169,7 +169,7 @@ class TeleprotoAuthService
         int $dcId = 2,
         ?SessionData $session = null
     ): array {
-        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
+        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: ''); // empty key: Client handshakes lazily
         $bot = $this->client->botMtproto(botToken: $botToken, session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
         $this->goLive($bot);
 
@@ -237,7 +237,7 @@ class TeleprotoAuthService
      */
     public function importLoginTokenAt(int $dcId, string $token, int $apiId, string $apiHash, ?SessionData $session = null): array
     {
-        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: random_bytes(256));
+        $sessionData = $session ?? new SessionData(dcId: $dcId, authKey: ''); // empty key: Client handshakes lazily
         $user = $this->client->user(session: $sessionData, dcId: $dcId, apiId: $apiId, apiHash: $apiHash);
         $this->goLive($user);
 

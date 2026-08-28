@@ -17,6 +17,11 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use MeRezaRezaei\Teleproto\Exceptions\DcMigrationException;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\AuthKeyException;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\PasswordHashInvalidException;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\PhoneCodeException;
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\SessionPasswordNeededException;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\Services\TeleprotoAuthService;
 
@@ -108,24 +113,24 @@ try {
             $verify = ask('Login code (Telegram app / SMS): ');
             try {
                 $signIn = $auth->signInWithCode($user, $phone, $code['phone_code_hash'], $verify);
-            } catch (TelegramException $e) {
-                if (!str_contains($e->getMessage(), 'SESSION_PASSWORD_NEEDED')) {
-                    throw $e;
-                }
+            } catch (SessionPasswordNeededException) {
                 echo "→ 2FA cloud password required\n";
                 for ($try = 0; $try < 3; $try++) {
                     $password = askSecret('2FA password: ');
                     try {
                         $signIn = $auth->check2faPassword($user, $password);
                         break;
-                    } catch (TelegramException $e2) {
-                        if (str_contains($e2->getMessage(), 'PASSWORD_HASH_INVALID') && $try < 2) {
+                    } catch (PasswordHashInvalidException) {
+                        if ($try < 2) {
                             echo "→ wrong password, try again\n";
                             continue;
                         }
-                        throw $e2;
+                        throw new PasswordHashInvalidException();
                     }
                 }
+            } catch (PhoneCodeException $e) {
+                fwrite(STDERR, 'LOGIN FAILED — ' . $e->getMessage() . "\n");
+                exit(1);
             }
 
             $me = whoami($user);
@@ -157,6 +162,12 @@ try {
             fwrite(STDERR, "unknown choice\n");
             exit(1);
     }
+} catch (FloodWaitException $e) {
+    fwrite(STDERR, sprintf("LOGIN BLOCKED — flood limit: retry in %d second(s).\n", $e->seconds));
+    exit(1);
+} catch (AuthKeyException $e) {
+    fwrite(STDERR, "LOGIN FAILED (auth key) — " . $e->getMessage() . "\n");
+    exit(1);
 } catch (Throwable $e) {
     fwrite(STDERR, sprintf("LOGIN FAILED — %s: %s\n", get_class($e), $e->getMessage()));
     exit(1);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\MTProto\Connection;
 
+use MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcExceptionResolver;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
@@ -152,9 +153,9 @@ class EncryptedConnection
 
             $inner = self::unwrapResultIfGzipped((array)$result['result']);
             if (($inner['_'] ?? '') === 'rpc_error') {
-                throw new TelegramException(
-                    'MTProto: ' . $inner['error_message'],
-                    (int)$inner['error_code']
+                throw RpcExceptionResolver::resolve(
+                    (string)($inner['error_message'] ?? 'UNKNOWN'),
+                    (int)($inner['error_code'] ?? 0)
                 );
             }
             return $inner;
@@ -184,6 +185,15 @@ class EncryptedConnection
         $transientIds = self::transientConstructorIds();
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
             $frame = FrameCodec::receiveAbridgedMessage($this->socket);
+
+            // A 4-byte frame decoding to a negative int32 is a transport-level
+            // error code (e.g. -404: auth key unknown) — surface it typed.
+            if (strlen($frame) === 4) {
+                $int32 = unpack('l', $frame)[1];
+                if ($int32 < 0) {
+                    throw RpcExceptionResolver::fromTransportCode($int32);
+                }
+            }
             $msg = PacketCodec::decryptPacket($frame, $this->session->authKey);
             $payload = $msg["payload"];
 
