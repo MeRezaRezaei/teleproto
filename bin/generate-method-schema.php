@@ -121,8 +121,13 @@ foreach ($methods as $name => &$m) {
 unset($m);
 
 ksort($methods);
+// Optional argv[1]: output directory (defaults to repo schema/; sources always read from repo schema/sources/)
+$outDir = isset($argv[1]) && is_string($argv[1]) ? rtrim($argv[1], '/') : "{$root}/schema";
+if (!is_dir($outDir)) {
+    mkdir($outDir, 0777, true);
+}
 file_put_contents(
-    "{$root}/schema/methods-mtproto.json",
+    "{$outDir}/methods-mtproto.json",
     json_encode([
         '_generated' => true,
         'api' => 'mtproto',

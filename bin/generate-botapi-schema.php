@@ -42,8 +42,13 @@ foreach (($spec['methods'] ?? []) as $name => $m) {
 }
 ksort($methods);
 
+// Optional argv[1]: output directory (defaults to repo schema/; source always read from repo schema/sources/)
+$outDir = isset($argv[1]) && is_string($argv[1]) ? rtrim($argv[1], '/') : "{$root}/schema";
+if (!is_dir($outDir)) {
+    mkdir($outDir, 0777, true);
+}
 file_put_contents(
-    "{$root}/schema/methods-botapi.json",
+    "{$outDir}/methods-botapi.json",
     json_encode([
         '_generated' => true,
         'api' => 'bot-http',

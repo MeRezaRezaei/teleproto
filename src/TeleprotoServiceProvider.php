@@ -43,6 +43,8 @@ class TeleprotoServiceProvider extends ServiceProvider
                 \MeRezaRezaei\Teleproto\Console\LoginCommand::class,
                 \MeRezaRezaei\Teleproto\Console\PollCommand::class,
                 \MeRezaRezaei\Teleproto\Console\DoctorCommand::class,
+                \MeRezaRezaei\Teleproto\Console\SchemaAuditCommand::class,
+                \MeRezaRezaei\Teleproto\Console\SchemaUpdateCommand::class,
             ]);
         }
 
