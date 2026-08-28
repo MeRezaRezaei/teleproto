@@ -64,24 +64,18 @@ class TLCodecTest extends TestCase
         $this->assertSame(strlen($bin), $offset);
     }
 
-    public function testFlagsSkippedWhenAbsent(): void
+    public function testFlagsAutoComputedWhenOmitted(): void
     {
-        $bin = TLEncoder::encodeObject('initConnection', [
-            'flags' => 0,
-            'api_id' => 12345,
-            'device_model' => 'test',
-            'system_version' => 'test',
-            'app_version' => '1.0',
-            'system_lang_code' => 'en',
-            'lang_pack' => '',
-            'lang_code' => 'en',
-            'query' => ['_' => 'help.getNearestDc'],
+        $bin = TLEncoder::encodeObject('auth.signIn', [
+            'phone_number' => '+1234567890',
+            'phone_code_hash' => 'hash_123',
+            'phone_code' => '12345',
         ]);
         $offset = 0;
         $decoded = TLDecoder::decodeObject($bin, $offset);
-        $this->assertSame('initConnection', $decoded['_']);
-        $this->assertSame(12345, $decoded['api_id']);
-        $this->assertSame('help.getNearestDc', $decoded['query']['_']);
+        $this->assertSame('auth.signIn', $decoded['_']);
+        $this->assertSame(1, $decoded['flags'], 'bit 0 was automatically set for phone_code');
+        $this->assertSame('12345', $decoded['phone_code']);
     }
 
     public function testBadServerSaltRoundTrip(): void

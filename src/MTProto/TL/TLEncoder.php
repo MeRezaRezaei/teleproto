@@ -14,9 +14,19 @@ class TLEncoder
         $signature = TLRegistry::signature($constructor);
         $fields = self::fieldsOf($signature);
         $flagWords = [];
+        // First pass: auto-compute flag bits from present arguments, while preserving any explicit flags passed
         foreach ($fields as [$fieldName, $fieldType]) {
             if ($fieldType === 'flags' || $fieldType === '#') {
                 $flagWords[$fieldName] = (int)($args[$fieldName] ?? 0);
+            }
+        }
+        foreach ($fields as [$fieldName, $fieldType]) {
+            if (preg_match('/^([a-zA-Z0-9_]+)\.(\d+)\?(.+)$/', $fieldType, $m)) {
+                $flagName = $m[1];
+                $bit = 1 << (int)$m[2];
+                if (array_key_exists($fieldName, $args) && $args[$fieldName] !== null && $args[$fieldName] !== false) {
+                    $flagWords[$flagName] = ($flagWords[$flagName] ?? 0) | $bit;
+                }
             }
         }
         foreach ($fields as [$fieldName, $fieldType]) {

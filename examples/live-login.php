@@ -118,8 +118,12 @@ function celebrate(array $authorization, string $sessionString, string $label): 
 
 function whoami(\MeRezaRezaei\Teleproto\Services\UserAccountScope $scope): array
 {
-    $res = $scope->call('users.getUsers', ['id' => [['_' => 'inputUserSelf']]]);
-    return (array)($res[0] ?? []);
+    try {
+        $res = $scope->call('users.getUsers', ['id' => [['_' => 'inputUserSelf']]]);
+        return (array)($res[0] ?? []);
+    } catch (\Throwable) {
+        return [];
+    }
 }
 
 $auth = new TeleprotoAuthService();
@@ -158,27 +162,34 @@ try {
                 throw new RuntimeException('could not request login code');
             }
 
-            $verify = ask('Login code (Telegram app / SMS): ');
-            try {
-                $signIn = $auth->signInWithCode($user, $phone, $code['phone_code_hash'], $verify);
-            } catch (SessionPasswordNeededException) {
-                echo "→ 2FA cloud password required\n";
-                for ($try = 0; $try < 3; $try++) {
-                    $password = askSecret('2FA password: ');
-                    try {
-                        $signIn = $auth->check2faPassword($user, $password);
-                        break;
-                    } catch (PasswordHashInvalidException) {
-                        if ($try < 2) {
-                            echo "→ wrong password, try again\n";
-                            continue;
+            while (true) {
+                $verify = ask('Login code (Telegram app / SMS): ');
+                try {
+                    $signIn = $auth->signInWithCode($user, $phone, $code['phone_code_hash'], $verify);
+                    break; // sign in succeeded
+                } catch (PhoneCodeException $e) {
+                    if (str_contains($e->rpcErrorMessage, 'PHONE_CODE_INVALID')) {
+                        echo "→ code was invalid, please check the digits and try again:\n";
+                        continue;
+                    }
+                    fwrite(STDERR, 'LOGIN FAILED — ' . $e->getMessage() . "\n");
+                    exit(1);
+                } catch (SessionPasswordNeededException) {
+                    echo "→ 2FA cloud password required\n";
+                    for ($try = 0; $try < 3; $try++) {
+                        $password = askSecret('2FA password: ');
+                        try {
+                            $signIn = $auth->check2faPassword($user, $password);
+                            break 2; // login succeeded
+                        } catch (PasswordHashInvalidException) {
+                            if ($try < 2) {
+                                echo "→ wrong password, try again\n";
+                                continue;
+                            }
+                            throw new PasswordHashInvalidException();
                         }
-                        throw new PasswordHashInvalidException();
                     }
                 }
-            } catch (PhoneCodeException $e) {
-                fwrite(STDERR, 'LOGIN FAILED — ' . $e->getMessage() . "\n");
-                exit(1);
             }
 
             $me = whoami($user);
