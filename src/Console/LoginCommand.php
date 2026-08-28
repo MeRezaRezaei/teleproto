@@ -9,6 +9,9 @@ use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
 use MeRezaRezaei\Teleproto\Services\TeleprotoAuthService;
 use MeRezaRezaei\Teleproto\Support\TerminalQr;
+use function Laravel\Prompts\password;
+use function Laravel\Prompts\select;
+use function Laravel\Prompts\text;
 
 /**
  * Interactive Telegram MTProto Login Command for Laravel CLI.
@@ -28,15 +31,23 @@ class LoginCommand extends Command
     {
         $this->components->info('Teleproto MTProto 2.0 Authentication Wizard');
 
-        $apiId = (int)(config('teleproto.api_id') ?: $this->ask('Enter Telegram API ID (from https://my.telegram.org)'));
-        $apiHash = (string)(config('teleproto.api_hash') ?: $this->ask('Enter Telegram API Hash'));
+        $apiId = (int) (config('teleproto.api_id') ?: text(
+            'Telegram API ID',
+            placeholder: 'from https://my.telegram.org',
+            validate: fn (string $v) => ctype_digit($v) && (int) $v > 0 ? null : 'API ID must be a positive integer.'
+        ));
+        $apiHash = (string) (config('teleproto.api_hash') ?: text(
+            'Telegram API Hash',
+            placeholder: 'from https://my.telegram.org',
+            validate: fn (string $v) => strlen($v) >= 30 ? null : 'API Hash looks too short.'
+        ));
 
         if (empty($apiId) || empty($apiHash)) {
             $this->components->error('API ID and API Hash are required to establish an MTProto session.');
             return self::FAILURE;
         }
 
-        $dcId = (int)$this->option('dc');
+        $dcId = (int) $this->option('dc');
 
         if ($this->option('bot')) {
             return $this->handleBotLogin($authService, $apiId, $apiHash, $dcId);
@@ -46,14 +57,14 @@ class LoginCommand extends Command
             return $this->handleQrLogin($authService, $apiId, $apiHash, $dcId);
         }
 
-        $choice = $this->choice(
-            'Select Authentication Method:',
+        $choice = select(
+            'Select Authentication Method',
             [
                 'phone' => '📱 User Account: Phone Number & Verification Code',
                 'qr'    => '📷 User Account: Scan QR Code with Telegram App',
                 'bot'   => '🤖 Bot Account: High-Speed MTProto Bot Token',
             ],
-            'phone'
+            default: 'phone'
         );
 
         return match ($choice) {
@@ -66,7 +77,11 @@ class LoginCommand extends Command
 
     protected function handlePhoneLogin(TeleprotoAuthService $authService, int $apiId, string $apiHash, int $dcId): int
     {
-        $phone = $this->option('phone') ?: $this->ask('Enter your phone number (with country code, e.g. +1234567890)');
+        $phone = (string) ($this->option('phone') ?: text(
+            'Phone number (international)',
+            placeholder: '+989123456789',
+            validate: fn (string $v) => preg_match('/^\+\d{8,15}$/', $v) ? null : 'Use full international format, e.g. +989123456789.'
+        ));
         if (empty($phone)) {
             $this->components->error('Phone number cannot be empty.');
             return self::FAILURE;
@@ -82,8 +97,8 @@ class LoginCommand extends Command
             $session = $result['session'];
             $phoneCodeHash = $result['phone_code_hash'];
 
-            $this->components->info("Verification code sent to your Telegram app or SMS.");
-            $code = $this->ask('Enter the 5-digit verification code you received');
+            $this->components->info('Verification code sent to your Telegram app or SMS.');
+            $code = text('Login code', required: true);
 
             try {
                 $authService->signInWithCode($user, $phone, $phoneCodeHash, $code);
@@ -126,7 +141,7 @@ class LoginCommand extends Command
 
     protected function handleBotLogin(TeleprotoAuthService $authService, int $apiId, string $apiHash, int $dcId): int
     {
-        $botToken = (string)(config('teleproto.bot_token') ?: $this->ask('Enter your Bot Token (e.g. 123456:ABC-DEF...)'));
+        $botToken = (string)(config('teleproto.bot_token') ?: text('Bot token (from @BotFather)', placeholder: '123456:ABC-DEF...', required: true));
         if (empty($botToken)) {
             $this->components->error('Bot token is required.');
             return self::FAILURE;
@@ -149,7 +164,7 @@ class LoginCommand extends Command
     protected function handle2faStep(TeleprotoAuthService $authService, $userScope, SessionData $session, string $envKey, string $label): int
     {
         $this->components->warn('🔒 Two-Step Verification (2FA Cloud Password) is enabled on this account.');
-        $password = $this->secret('Enter your 2FA Cloud Password');
+        $password = password('2FA Cloud Password');
 
         $authService->check2faPassword($userScope, (string)$password);
 
@@ -179,27 +194,10 @@ class LoginCommand extends Command
         $this->newLine();
 
         if ($this->confirm("Would you like to save this session to your .env file as {$envKey}?", true)) {
-            $this->saveToEnv($envKey, $sessionString);
+            \MeRezaRezaei\Teleproto\Support\EnvFile::upsert(base_path('.env'), $envKey, $sessionString);
             $this->components->info("Saved to .env as {$envKey}.");
         }
 
         return self::SUCCESS;
-    }
-
-    protected function saveToEnv(string $key, string $value): void
-    {
-        $envPath = base_path('.env');
-        if (!file_exists($envPath)) {
-            return;
-        }
-
-        $envContent = (string)file_get_contents($envPath);
-        if (preg_match("/^{$key}=.*/m", $envContent)) {
-            $envContent = preg_replace("/^{$key}=.*/m", "{$key}=\"{$value}\"", $envContent);
-        } else {
-            $envContent .= "\n{$key}=\"{$value}\"\n";
-        }
-
-        @file_put_contents($envPath, $envContent);
     }
 }
