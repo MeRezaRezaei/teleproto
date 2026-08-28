@@ -12,7 +12,18 @@ declare(strict_types=1);
  *   ./bin/teleproto poll    - Listen for incoming bot updates via long-polling
  */
 
-require __DIR__ . '/../vendor/autoload.php';
+$loaded = false;
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (file_exists($autoload)) {
+        require $autoload;
+        $loaded = true;
+        break;
+    }
+}
+if (!$loaded) {
+    fwrite(STDERR, "Teleproto CLI: cannot find composer autoload.php. Run 'composer install' in the teleproto repo, or install the package via composer.\n");
+    exit(1);
+}
 
 $action = strtolower((string) ($argv[1] ?? 'login'));
 

@@ -6,7 +6,7 @@
   Please use the issue templates and include a minimal code snippet, your PHP version (8.2+), and the full stack trace.
 - **Questions and usage help** — GitHub issues are the support channel for now (GitHub Discussions are not enabled).
   Search existing issues first, then open one labeled as a question.
-- **Documentation** — start with the [README](https://github.com/MeRezaRezaei/teleproto#readme) and the [docs/](https://github.com/MeRezaRezaei/teleproto/tree/main/docs) folder (`bot-client.md`, `user-client.md`, `telegram-passport.md`, `scaling.md`).
+- **Documentation** — start with the [README](https://github.com/MeRezaRezaei/teleproto#readme) and the [docs/](https://github.com/MeRezaRezaei/teleproto/tree/main/docs) folder (`quickstart.md`, `bot-client.md`, `user-client.md`, `telegram-passport.md`, `scaling.md`).
 - **Live connectivity check** — run `vendor/bin/teleproto doctor` (no Telegram account needed) before reporting connection issues.
 
 ## Versioning

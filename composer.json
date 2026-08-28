@@ -1,6 +1,6 @@
 {
     "name": "merezarezaei/teleproto",
-    "description": "Zero-friction Telegram for Laravel & PHP — MTProto 2.0, Bot API, Mini App auth, Passport KYC",
+    "description": "Almost-zero-friction Telegram for Laravel & PHP — MTProto 2.0, Bot API, Mini App auth, Passport KYC",
     "type": "library",
     "license": "MIT",
     "keywords": [

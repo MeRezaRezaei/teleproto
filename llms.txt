@@ -9,7 +9,7 @@
 - [User MTProto client](docs/user-client.md): credentials, phone/2FA login flow, session strings, raw calls
 - [Bot API client](docs/bot-client.md): bot(), keyboards, webhooks, polling, botMtproto()
 - [Scaling](docs/scaling.md): one-process-per-account model, backpressure, load limits
-- [Telegram Passport](docs/telegram-passport.md): Mini App HMAC + Passport credential decryption
+- [Telegram Passport](docs/telegram-passport.md): Passport KYC only — RSA keypair setup, credential decryption in a webhook. Mini App HMAC auth lives in the [Quickstart](docs/quickstart.md) (see also the README)
 - [skills/](skills/): generated per-method reference (parameters, returns, errors, usage) for every curated method
 
 ## Quickstart
@@ -28,7 +28,7 @@ TELEGRAM_DC_ID=2                  # optional
 TELEGRAM_WEBHOOK_SECRET="..."     # optional
 ```
 
-Login wizard (interactive; phone + code + 2FA SRP, QR deep link, or bot token): `php artisan teleproto:login` (Laravel) or `./bin/teleproto login` / `php examples/live-login.php` (repo). Writes `TELEGRAM_USER_SESSION` / `TELEGRAM_BOT_SESSION` to `.env` on success. With a session in `.env`, `TP::user()` and `TP::botMtproto()` need zero arguments.
+Login wizard (interactive; phone + code + 2FA SRP, QR deep link, or bot token): `php artisan teleproto:login` (Laravel), `vendor/bin/teleproto login` (installed package), or `./bin/teleproto login` / `php examples/live-login.php` (repo clone). Writes `TELEGRAM_USER_SESSION` / `TELEGRAM_BOT_SESSION` to `.env` on success. With a session in `.env`, `TP::user()` and `TP::botMtproto()` need zero arguments.
 
 First calls:
 

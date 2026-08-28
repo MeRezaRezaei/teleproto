@@ -87,14 +87,14 @@ What that means per Laravel runtime:
 - **Octane** — boot once, stay warm over HTTP: build the client in a container binding during boot and reuse it across requests (workers handle one request at a time, matching the single in-flight socket).
 
 ```text
- once, ever                 every process                  per call
-──────────────────        ─────────────────────────      ─────────────────
-teleproto:login     ──▶   load session string      ──▶   warm RPC ≈ 5 ms
-  (DH handshake           (~49 ms cold start:            │
-   → auth key)             TCP + session setup)           ├── FPM: every request cold
-                           ├── FPM: every request         │     (fine: occasional)
-                           ├── queue worker: once         └── worker/Octane:
-                           └── Octane: boot once               warm from call #2
+once, ever                every process                   per call
+──────────────────       ────────────────────────        ─────────────────
+teleproto:login     ──▶  load session string        ──▶  warm RPC ≈ 5 ms
+  (DH handshake            (~49 ms cold start:             │
+   → auth key)              TCP + session setup)            ├── FPM: cold every request
+                                                            │     (fine: occasional)
+                                                            └── worker / Octane:
+                                                                  warm from call #2
 ```
 
 The honest takeaway: Teleproto has no daemon precisely because cold start is cheap. You only reach for long-lived workers when you want *warm* latency or continuous polling — not because the library forces you to.

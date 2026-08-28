@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v1.0.0] - 2026-08-29
+## [v1.0.0] - 2026-08-28
 
 ### ⚡ Highlights & Overview
 - **Unified Telegram Protocol Engine**: First PHP & Laravel engine to seamlessly support both **Telegram Bot API (HTTP)** and **Native MTProto 2.0 (Binary TCP Sockets)** for both **Bots** and **User Accounts**.

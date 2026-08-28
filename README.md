@@ -167,9 +167,9 @@ TELEGRAM_USER_SESSION="2:AQAD...:12345678:0"
 TELEGRAM_BOT_SESSION="2:AQAD...:98765432:0"
 ```
 
-Then log in once: `php artisan teleproto:login`. That is the whole setup.
+Then log in once: `php artisan teleproto:login`. That is the only setup for MTProto user (and binary-bot) sessions — HTTP Bot API users need nothing but the bot token.
 
-> **Note:** the wizard is an Artisan command (the package registers no standalone `vendor/bin` binary). From a clone of this repo, `./bin/teleproto login` runs the same wizard for development.
+> **Note:** In a Laravel app use `php artisan teleproto:login`. The wizard also ships as `vendor/bin/teleproto login` (in a repo clone: `./bin/teleproto login`).
 
 ---
 
@@ -219,6 +219,8 @@ The same information is indexed for agent crawlers in [`llms.txt`](llms.txt). Bo
 ## Documentation
 
 - [Changelog & Release Notes](CHANGELOG.md)
+- [Quickstart: Install → First Call](docs/quickstart.md)
+- [Docs Index](docs/index.md)
 - [User MTProto Client Guide](docs/user-client.md)
 - [Bot API Client Guide](docs/bot-client.md)
 - [Telegram Passport KYC Guide](docs/telegram-passport.md)
