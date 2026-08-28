@@ -7,7 +7,6 @@ return [
     |--------------------------------------------------------------------------
     */
     'bot_token' => env('TELEGRAM_BOT_TOKEN'),
-    'bot_username' => env('TELEGRAM_BOT_USERNAME'),
     'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
 
     /*
@@ -27,14 +26,5 @@ return [
     */
     'user_session' => env('TELEGRAM_USER_SESSION'),
     'bot_session' => env('TELEGRAM_BOT_SESSION'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Redis Streams & Command Queues
-    |--------------------------------------------------------------------------
-    */
-    'redis_connection' => env('TELEGRAM_REDIS_CONNECTION', 'default'),
-    'update_stream' => env('TELEGRAM_UPDATE_STREAM', 'tg:stream:updates'),
-    'command_queue_prefix' => env('TELEGRAM_COMMAND_QUEUE_PREFIX', 'tg:queue:commands:'),
 ];
 

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [Unreleased]
+### Removed
+- Deprecated BC alias `MeRezaRezaei\Teleproto\Exceptions\FloodWaitException` — use `MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException` (pre-release internal BC break; the alias never shipped in a tagged release).
+- Dead config keys `redis_connection`, `update_stream`, `command_queue_prefix`, and `bot_username` from `config/teleproto.php` (referenced nowhere in the codebase).
 ### Added
 - Real MTProto 2.0 wire path: intermediate TCP framing (`FrameCodec`), auth-key DH handshake (`AuthKeyFactory`), encrypted RPC (`EncryptedConnection`) with gzip_packed + bad_server_salt handling.
 - `teleproto:doctor` live verification command (no Telegram account needed).
@@ -18,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Live-verified against production Telegram DC2 (both 149.154.167.50 and .51): full DH handshake + encrypted `help.getNearestDc` in ~1.2s (`php examples/live-doctor.php`), cross-checked against MadelineProto as ground truth. Offline verification additionally uses official transcript byte vectors.
 - Abridged TCP transport (`0xef` + varint length/4) is the default wire framing — production DCs silently drop intermediate framing.
 - Handshake uses `p_q_inner_data_dc` (#a9f55f95) with RSA-PAD encryption (raw RSA over the temp_key/aes construction), required by current servers.
+- **BC break (pre-release)**: `UpdateSinkInterface::handle()` now returns `bool` (true = processed, false = skip/not-now backpressure) instead of `void`; `EventDispatcherSink` returns true after dispatching. Custom sinks must be updated before upgrading.
+- `TelegramUpdateReceived` is enriched with `?int $accountId` and `string $source` (`'mtproto-user'|'bot-http'`, BC defaults `null`/`'bot-http'`); `EventDispatcherSink` derives both automatically from the sink source string (numeric account id → mtproto-user, bot token → bot-http) or takes them explicitly via constructor.
+- New events: `TelegramGapDetected` (kind `slice|too_long|hole` + context) and `TelegramResynced` (adopted `{pts, date, qts, seq}` state), both dispatched with the same Laravel-availability guard as `TelegramUpdateReceived`.
+- `pollUser()` now implements the full `updates.getDifference` state machine: `differenceSlice` adopts `intermediate_state` and keeps fetching without ever re-requesting the same window (fixes an infinite-refetch loop), `differenceTooLong` hard-resets pts to the server's, `new_encrypted_messages` (qts items) are wrapped as `updateNewEncryptedMessage` and streamed to the sink instead of being dropped, and sequence state is exposed via `getSequenceState()`/`setSequenceState()` plus a per-channel pts map via `getChannelPts()`.
 
 ---
 

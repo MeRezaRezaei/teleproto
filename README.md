@@ -272,6 +272,7 @@ $firstName = $decrypted['personal_details']['first_name'];
 - [User MTProto Client Guide](docs/user-client.md)
 - [Bot API Client Guide](docs/bot-client.md)
 - [Telegram Passport KYC Guide](docs/telegram-passport.md)
+- [Scaling: Multiple Accounts & Load Limits](docs/scaling.md)
 - [Core Engine Design Spec](docs/superpowers/specs/2026-08-27-teleproto-core-design.md)
 
 ---

@@ -16,6 +16,7 @@ use MeRezaRezaei\Teleproto\Exceptions\Rpc\PhoneNumberException;
 use MeRezaRezaei\Teleproto\Exceptions\Rpc\RpcErrorException;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\Services\TeleprotoClient;
+use MeRezaRezaei\Teleproto\Types\InputUser;
 
 $env = file_exists(__DIR__ . '/../.env') ? parse_ini_file(__DIR__ . '/../.env') : [];
 $session = $env['TELEGRAM_USER_SESSION'] ?? getenv('TELEGRAM_USER_SESSION');
@@ -113,7 +114,7 @@ $runner('Live Exception: USER_ID_INVALID guidance on invalid inputUser', functio
 
     try {
         $user->call('users.getFullUser', [
-            'id' => ['_' => 'inputUser', 'user_id' => 999999999999, 'access_hash' => 0]
+            'id' => InputUser::user(999999999999)
         ]);
         throw new RuntimeException('Expected USER_ID_INVALID but call succeeded');
     } catch (RpcErrorException $e) {

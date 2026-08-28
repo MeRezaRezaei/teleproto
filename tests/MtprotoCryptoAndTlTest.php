@@ -120,13 +120,15 @@ class MtprotoCryptoAndTlTest extends TestCase
 
     public function testMTProtoInputTypesBuilders(): void
     {
-        $userInput = \MeRezaRezaei\Teleproto\Types\InputUser::user(12345, 'hash_abc');
+        $userInput = \MeRezaRezaei\Teleproto\Types\InputUser::user(12345, 123456789012345678);
         $this->assertEquals('inputUser', $userInput['_']);
         $this->assertEquals(12345, $userInput['user_id']);
+        $this->assertSame(123456789012345678, $userInput['access_hash']);
 
-        $channelInput = \MeRezaRezaei\Teleproto\Types\InputChannel::channel(67890, 'hash_xyz');
+        $channelInput = \MeRezaRezaei\Teleproto\Types\InputChannel::channel(67890, 876543210987654321);
         $this->assertEquals('inputChannel', $channelInput['_']);
         $this->assertEquals(67890, $channelInput['channel_id']);
+        $this->assertSame(876543210987654321, $channelInput['access_hash']);
 
         $fileInput = \MeRezaRezaei\Teleproto\Types\InputFile::file(111, 4, 'photo.jpg', 'md5_sum');
         $this->assertEquals('inputFile', $fileInput['_']);

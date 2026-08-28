@@ -14,14 +14,14 @@ class InputUser
      *
      * @param int $userId Target User ID
      * @param int|string $accessHash Access hash from contact/dialog/peer resolution
-     * @return array{_: 'inputUser', user_id: int, access_hash: string}
+     * @return array{_: 'inputUser', user_id: int, access_hash: int}
      */
     public static function user(int $userId, int|string $accessHash = 0): array
     {
         return [
             '_' => 'inputUser',
             'user_id' => $userId,
-            'access_hash' => (string)$accessHash,
+            'access_hash' => (int)$accessHash,
         ];
     }
 

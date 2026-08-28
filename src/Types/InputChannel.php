@@ -14,14 +14,14 @@ class InputChannel
      *
      * @param int $channelId Target Channel / Supergroup ID
      * @param int|string $accessHash Access hash from contact/dialog/peer resolution
-     * @return array{_: 'inputChannel', channel_id: int, access_hash: string}
+     * @return array{_: 'inputChannel', channel_id: int, access_hash: int}
      */
     public static function channel(int $channelId, int|string $accessHash = 0): array
     {
         return [
             '_' => 'inputChannel',
             'channel_id' => $channelId,
-            'access_hash' => (string)$accessHash,
+            'access_hash' => (int)$accessHash,
         ];
     }
 

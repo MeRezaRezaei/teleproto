@@ -6,8 +6,8 @@ namespace MeRezaRezaei\Teleproto\Services;
 
 use MeRezaRezaei\Teleproto\MTProto\Client as MTProtoClient;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
-use MeRezaRezaei\Teleproto\Types\InputContact;
-use MeRezaRezaei\Teleproto\Types\InputPeer;
+use MeRezaRezaei\Teleproto\Types\InputChannel;
+use MeRezaRezaei\Teleproto\Types\InputUser;
 
 /**
  * Scoped User MTProto operations with typed helper methods and full PHPDoc method mappings.
@@ -252,7 +252,7 @@ class UserAccountScope
     public function getFullUser(int|array $user): array
     {
         $inputUser = is_int($user)
-            ? ['_' => 'inputUser', 'user_id' => $user, 'access_hash' => 0]
+            ? InputUser::user($user)
             : $user;
 
         return $this->call('users.getFullUser', ['id' => $inputUser]);
@@ -269,7 +269,7 @@ class UserAccountScope
     public function getFullChannel(int|array $channel): array
     {
         $inputChannel = is_int($channel)
-            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            ? InputChannel::channel($channel)
             : $channel;
 
         return $this->call('channels.getFullChannel', ['channel' => $inputChannel]);
@@ -284,7 +284,7 @@ class UserAccountScope
     public function joinChannel(int|string|array $channel): array
     {
         $inputChannel = is_int($channel)
-            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            ? InputChannel::channel($channel)
             : $channel;
 
         return $this->call('channels.joinChannel', ['channel' => $inputChannel]);
@@ -299,7 +299,7 @@ class UserAccountScope
     public function leaveChannel(int|string|array $channel): array
     {
         $inputChannel = is_int($channel)
-            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            ? InputChannel::channel($channel)
             : $channel;
 
         return $this->call('channels.leaveChannel', ['channel' => $inputChannel]);
@@ -335,11 +335,11 @@ class UserAccountScope
     public function inviteToChannel(int|string|array $channel, array $users): array
     {
         $inputUsers = array_map(function ($u) {
-            return is_int($u) ? ['_' => 'inputUser', 'user_id' => $u, 'access_hash' => 0] : $u;
+            return is_int($u) ? InputUser::user($u) : $u;
         }, $users);
 
         $inputChannel = is_int($channel)
-            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            ? InputChannel::channel($channel)
             : $channel;
 
         return $this->call('channels.inviteToChannel', [
@@ -360,7 +360,7 @@ class UserAccountScope
     public function getParticipants(int|string|array $channel, array $filter = [], int $offset = 0, int $limit = 50): array
     {
         $inputChannel = is_int($channel)
-            ? ['_' => 'inputChannel', 'channel_id' => $channel, 'access_hash' => 0]
+            ? InputChannel::channel($channel)
             : $channel;
 
         return $this->call('channels.getParticipants', [
@@ -407,7 +407,7 @@ class UserAccountScope
     public function deleteContacts(array $userIds): array
     {
         $inputUsers = array_map(function ($u) {
-            return is_int($u) ? ['_' => 'inputUser', 'user_id' => $u, 'access_hash' => 0] : $u;
+            return is_int($u) ? InputUser::user($u) : $u;
         }, $userIds);
 
         return $this->call('contacts.deleteContacts', [

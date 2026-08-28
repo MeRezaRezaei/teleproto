@@ -277,11 +277,9 @@ class TeleprotoClientTest extends TestCase
         $this->assertStringContainsString($url, $fallback);
     }
 
-    public function testLegacyFloodWaitExceptionAlias(): void
+    public function testFloodWaitExceptionExposesSeconds(): void
     {
-        $e = new \MeRezaRezaei\Teleproto\Exceptions\FloodWaitException(17);
-        $this->assertInstanceOf(\MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException::class, $e);
-        $this->assertSame(17, $e->getSeconds());
+        $e = new \MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException(17, 'FLOOD_WAIT_17', 420);
         $this->assertSame(17, $e->seconds);
     }
 
@@ -362,9 +360,11 @@ class TeleprotoClientTest extends TestCase
 
         $customSink = new class($capturedUpdates) implements \MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface {
             public function __construct(public array &$storage) {}
-            public function handle(array $update, ?string $source = null): void
+            public function handle(array $update, ?string $source = null): bool
             {
                 $this->storage[] = ['source' => $source, 'update' => $update];
+
+                return true;
             }
         };
 

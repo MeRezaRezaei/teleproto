@@ -6,13 +6,20 @@ namespace MeRezaRezaei\Teleproto\Tests;
 
 use Closure;
 use PHPUnit\Framework\TestCase;
+use Illuminate\Container\Container;
+use Illuminate\Events\Dispatcher as EventsDispatcher;
+use Illuminate\Support\Facades\Event;
 use MeRezaRezaei\Teleproto\Exceptions\FloodWaitException;
 use MeRezaRezaei\Teleproto\Exceptions\Rpc\FloodWaitException as RpcFloodWaitException;
 use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Client as MTProtoClient;
 use MeRezaRezaei\Teleproto\MTProto\SessionData;
 use MeRezaRezaei\Teleproto\Contracts\UpdateSinkInterface;
+use MeRezaRezaei\Teleproto\Events\TelegramGapDetected;
+use MeRezaRezaei\Teleproto\Events\TelegramResynced;
+use MeRezaRezaei\Teleproto\Events\TelegramUpdateReceived;
 use MeRezaRezaei\Teleproto\Services\BotClient;
+use MeRezaRezaei\Teleproto\Services\EventDispatcherSink;
 use MeRezaRezaei\Teleproto\Services\UpdatePollerService;
 use MeRezaRezaei\Teleproto\Services\UserAccountScope;
 use RuntimeException;
@@ -29,9 +36,11 @@ class UpdatePollerTest extends TestCase
         return new class($storage) implements UpdateSinkInterface {
             public function __construct(public array &$storage) {}
 
-            public function handle(array $update, ?string $source = null): void
+            public function handle(array $update, ?string $source = null): bool
             {
                 $this->storage[] = ['source' => $source, 'update' => $update];
+
+                return true;
             }
         };
     }
@@ -63,9 +72,11 @@ class UpdatePollerTest extends TestCase
         ));
     }
 
-    public function testSecondsToWaitAcceptsDeprecatedFloodWaitAlias(): void
+    public function testSecondsToWaitReturnsExactFloodWaitSeconds(): void
     {
-        $this->assertSame(45, UpdatePollerService::secondsToWait(new FloodWaitException(45)));
+        $this->assertSame(45, UpdatePollerService::secondsToWait(
+            new RpcFloodWaitException(45, 'FLOOD_WAIT_45', 420)
+        ));
     }
 
     public function testSecondsToWaitParsesBotApi429RetryAfter(): void
@@ -228,5 +239,164 @@ class UpdatePollerTest extends TestCase
         $this->assertCount(1, $captured);
         $this->assertSame('updateNewMessage', $captured[0]['update']['_']);
         $this->assertGreaterThanOrEqual(3.0, $user->backoffSeconds);
+    }
+
+    // ------------------------------------------------------------------
+    // TelegramUpdateReceived enrichment (BC constructor defaults)
+    // ------------------------------------------------------------------
+
+    /**
+     * Run $body with the Event facade wired to an in-memory dispatcher,
+     * restoring the previous application afterwards.
+     *
+     * @template T
+     * @param Closure(EventsDispatcher): T $body
+     * @return T
+     */
+    private function withEventDispatcher(Closure $body): mixed
+    {
+        $previousApp = Event::getFacadeApplication();
+
+        $app = new Container();
+        $dispatcher = new EventsDispatcher($app);
+        Event::setFacadeApplication($app);
+        Event::swap($dispatcher);
+
+        try {
+            return $body($dispatcher);
+        } finally {
+            Event::setFacadeApplication($previousApp);
+            Event::clearResolvedInstances();
+        }
+    }
+
+    public function testTelegramUpdateReceivedBcConstructorDefaults(): void
+    {
+        $rawUpdate = ['update_id' => 5, 'message' => ['text' => 'hi']];
+        $event = new TelegramUpdateReceived($rawUpdate, '123456:BOT');
+
+        $this->assertNull($event->accountId);
+        $this->assertSame('bot-http', $event->source);
+        // Legacy getters keep working.
+        $this->assertSame(5, $event->getUpdateId());
+        $this->assertSame('hi', $event->getMessage()['text']);
+        $this->assertNull($event->getCallbackQuery());
+    }
+
+    public function testTelegramUpdateReceivedExplicitEnrichment(): void
+    {
+        $rawUpdate = ['update_id' => 6];
+        $event = new TelegramUpdateReceived($rawUpdate, null, 501558149, 'mtproto-user');
+
+        $this->assertSame(501558149, $event->accountId);
+        $this->assertSame('mtproto-user', $event->source);
+    }
+
+    public function testEventDispatcherSinkReturnsTrueAndDerivesUserTransport(): void
+    {
+        $received = [];
+
+        $this->withEventDispatcher(function (EventsDispatcher $dispatcher) use (&$received): void {
+            $dispatcher->listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $e) use (&$received): void {
+                $received[] = $e;
+            });
+
+            $sink = new EventDispatcherSink();
+            $update = ['_' => 'updateNewMessage', 'message' => ['id' => 1]];
+
+            $this->assertTrue($sink->handle($update, '501558149'));
+        });
+
+        $this->assertCount(1, $received);
+        $this->assertSame(501558149, $received[0]->accountId);
+        $this->assertSame('mtproto-user', $received[0]->source);
+        $this->assertSame('501558149', $received[0]->botToken);
+    }
+
+    public function testEventDispatcherSinkDerivesBotHttpForBotTokens(): void
+    {
+        $received = [];
+
+        $this->withEventDispatcher(function (EventsDispatcher $dispatcher) use (&$received): void {
+            $dispatcher->listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $e) use (&$received): void {
+                $received[] = $e;
+            });
+
+            $sink = new EventDispatcherSink();
+            $this->assertTrue($sink->handle(['update_id' => 1], '123456:ABC-DEF'));
+            $this->assertTrue($sink->handle(['update_id' => 2]));
+        });
+
+        $this->assertCount(2, $received);
+        foreach ($received as $event) {
+            $this->assertNull($event->accountId);
+            $this->assertSame('bot-http', $event->source);
+        }
+    }
+
+    public function testEventDispatcherSinkExplicitTransportWins(): void
+    {
+        $received = [];
+
+        $this->withEventDispatcher(function (EventsDispatcher $dispatcher) use (&$received): void {
+            $dispatcher->listen(TelegramUpdateReceived::class, function (TelegramUpdateReceived $e) use (&$received): void {
+                $received[] = $e;
+            });
+
+            $sink = new EventDispatcherSink('mtproto-user', 42);
+            $this->assertTrue($sink->handle(['update_id' => 1], 'ignored-token'));
+        });
+
+        $this->assertSame(42, $received[0]->accountId);
+        $this->assertSame('mtproto-user', $received[0]->source);
+    }
+
+    public function testGapAndResyncedDispatchIsGuardedWithoutLaravel(): void
+    {
+        $guard = Event::getFacadeApplication();
+        Event::setFacadeApplication(null);
+        Event::clearResolvedInstances();
+
+        try {
+            TelegramGapDetected::dispatch('slice', ['from_pts' => 1, 'to_pts' => 2]);
+            TelegramResynced::dispatch(['pts' => 2, 'date' => 0, 'qts' => 0, 'seq' => 0]);
+            $this->assertFalse((bool)Event::getFacadeApplication());
+        } finally {
+            Event::setFacadeApplication($guard);
+        }
+    }
+
+    public function testProcessUpdateSinkRefusalSkipsCallbackButNotOtherUpdates(): void
+    {
+        $captured = [];
+        $refused = [];
+        $sink = new class($captured, $refused) implements UpdateSinkInterface {
+            public function __construct(private array &$captured, private array &$refused) {}
+
+            public function handle(array $update, ?string $source = null): bool
+            {
+                $want = ($update['message']['id'] ?? 0) !== 1;
+                if ($want) {
+                    $this->captured[] = $update;
+                } else {
+                    $this->refused[] = $update;
+                }
+
+                return $want;
+            }
+        };
+
+        $poller = new UpdatePollerService($sink);
+        $seen = [];
+        $onUpdate = function (array $update) use (&$seen): void {
+            $seen[] = $update['message']['id'];
+        };
+
+        $poller->processUpdate(['message' => ['id' => 1]], 'a', $onUpdate);
+        $poller->processUpdate(['message' => ['id' => 2]], 'a', $onUpdate);
+
+        $this->assertCount(1, $refused);
+        $this->assertCount(1, $captured);
+        $this->assertSame([2], $seen);
     }
 }
