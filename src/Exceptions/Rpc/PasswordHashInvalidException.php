@@ -10,8 +10,8 @@ namespace MeRezaRezaei\Teleproto\Exceptions\Rpc;
  */
 class PasswordHashInvalidException extends RpcErrorException
 {
-    public function __construct(string $rpcErrorMessage = 'PASSWORD_HASH_INVALID', int $rpcErrorCode = 400)
+    public function __construct(string $rpcErrorMessage = 'PASSWORD_HASH_INVALID', int $rpcErrorCode = 400, ?string $method = null)
     {
-        parent::__construct($rpcErrorMessage, $rpcErrorCode, 'The provided password hash is invalid. → Wrong 2FA password; re-ask the user, do not blind-retry.');
+        parent::__construct($rpcErrorMessage, $rpcErrorCode, 'The provided password hash is invalid. → Wrong 2FA password; re-ask the user, do not blind-retry.', $method);
     }
 }

@@ -10,11 +10,11 @@ namespace MeRezaRezaei\Teleproto\Exceptions\Rpc;
  */
 class ApiIdException extends RpcErrorException
 {
-    public function __construct(string $rpcErrorMessage, int $rpcErrorCode)
+    public function __construct(string $rpcErrorMessage, int $rpcErrorCode, ?string $method = null)
     {
         $hint = $rpcErrorMessage === 'API_ID_PUBLISHED_FLOOD'
             ? "This API id was published somewhere, you can't use it now. → Obtain your own api_id from my.telegram.org."
             : 'API ID invalid. → Check the api_id/api_hash pair from my.telegram.org.';
-        parent::__construct($rpcErrorMessage, $rpcErrorCode, $hint);
+        parent::__construct($rpcErrorMessage, $rpcErrorCode, $hint, $method);
     }
 }

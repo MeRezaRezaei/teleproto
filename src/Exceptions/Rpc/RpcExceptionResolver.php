@@ -91,13 +91,13 @@ final class RpcExceptionResolver
 
         // Typed classes for errors callers branch on programmatically
         $typed = match (true) {
-            $message === 'SESSION_PASSWORD_NEEDED' => new SessionPasswordNeededException($message, $effectiveCode),
-            $message === 'PASSWORD_HASH_INVALID' => new PasswordHashInvalidException($message, $effectiveCode),
-            str_starts_with($message, 'PHONE_CODE_') => new PhoneCodeException($message, $effectiveCode),
-            str_starts_with($message, 'PHONE_NUMBER_') => new PhoneNumberException($message, $effectiveCode),
-            str_starts_with($message, 'API_ID_') => new ApiIdException($message, $effectiveCode),
+            $message === 'SESSION_PASSWORD_NEEDED' => new SessionPasswordNeededException($message, $effectiveCode, $method),
+            $message === 'PASSWORD_HASH_INVALID' => new PasswordHashInvalidException($message, $effectiveCode, $method),
+            str_starts_with($message, 'PHONE_CODE_') => new PhoneCodeException($message, $effectiveCode, $method),
+            str_starts_with($message, 'PHONE_NUMBER_') => new PhoneNumberException($message, $effectiveCode, $method),
+            str_starts_with($message, 'API_ID_') => new ApiIdException($message, $effectiveCode, $method),
             in_array($message, ['AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'], true)
-                => new AuthKeyException($message, $effectiveCode),
+                => new AuthKeyException($message, $effectiveCode, $method),
             default => null,
         };
 

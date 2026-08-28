@@ -10,7 +10,7 @@ namespace MeRezaRezaei\Teleproto\Exceptions\Rpc;
  */
 class AuthKeyException extends RpcErrorException
 {
-    public function __construct(string $rpcErrorMessage = 'AUTH_KEY_UNREGISTERED', int $rpcErrorCode = 401)
+    public function __construct(string $rpcErrorMessage = 'AUTH_KEY_UNREGISTERED', int $rpcErrorCode = 401, ?string $method = null)
     {
         $hint = match ($rpcErrorMessage) {
             'AUTH_KEY_INVALID' => 'auth_key_id is not known to the server: regenerate the key (fresh handshake).',
@@ -18,6 +18,6 @@ class AuthKeyException extends RpcErrorException
             'SESSION_EXPIRED' => 'Session expired: log in again.',
             default => 'Key not registered: a freshly generated key must complete its first encrypted request on the handshake connection; otherwise re-authenticate.',
         };
-        parent::__construct($rpcErrorMessage, $rpcErrorCode, $hint);
+        parent::__construct($rpcErrorMessage, $rpcErrorCode, $hint, $method);
     }
 }
