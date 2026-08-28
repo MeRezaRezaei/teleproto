@@ -68,6 +68,7 @@ class TLDecoder
         $match = match (true) {
             $type === 'int' => TLSerializer::unpackInt($data, $offset),
             $type === 'long' => TLSerializer::unpackLong($data, $offset),
+            $type === 'double' => TLSerializer::unpackDouble($data, $offset),
             $type === 'true' => true, // presence was encoded by the flag bit alone
             $type === 'int128' => self::rawBytes($data, $offset, 16),
             $type === 'int256' => self::rawBytes($data, $offset, 32),

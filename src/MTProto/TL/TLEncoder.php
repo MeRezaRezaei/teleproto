@@ -58,6 +58,7 @@ class TLEncoder
         return match (true) {
             $type === 'int' => TLSerializer::packInt((int)$value),
             $type === 'long' => TLSerializer::packLong((int)$value),
+            $type === 'double' => TLSerializer::packDouble((float)$value),
             $type === 'true' => '', // presence is encoded by the flag bit alone
             $type === 'int128' || $type === 'int256' => str_pad((string)$value, $type === 'int128' ? 16 : 32, "\x00", STR_PAD_LEFT),
             $type === 'bytes' || $type === 'string' => TLSerializer::packString((string)$value),
