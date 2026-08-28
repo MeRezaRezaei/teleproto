@@ -93,7 +93,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock, apiId: 12345);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock, apiId: 12345));
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 0x1122334455667788,
@@ -124,7 +124,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $newSalt = 0xCAFEBABE;
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('bad_server_salt', [
@@ -154,7 +154,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 7,
@@ -178,7 +178,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 7,
@@ -198,7 +198,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         // new_session_created first_msg_id:long unique_id:long server_salt:long
         $this->seedFakeServerResponse($serverSock, $authKey,
@@ -219,7 +219,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $msgsAck = pack('V', TLRegistry::id('msgs_ack')) . TLSerializer::packVector([], TLSerializer::packLong(...));
         for ($i = 0; $i < 4; $i++) {
@@ -252,7 +252,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
         $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
@@ -275,7 +275,7 @@ class EncryptedConnectionTest extends TestCase
     {
         [$clientSock, $serverSock] = $this->socketPair();
         $session = new SessionData(dcId: 2, authKey: random_bytes(256));
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $conn->close();
         $conn->close();
@@ -292,6 +292,16 @@ class EncryptedConnectionTest extends TestCase
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         $this->assertNotFalse($pair);
         return $pair;
+    }
+
+    /**
+     * Pins the connection's random session_id to the fixed id the seed helper
+     * encrypts with (decryptPacket enforces the session_id echo).
+     */
+    private function pinnedConn(EncryptedConnection $conn): EncryptedConnection
+    {
+        (new \ReflectionProperty(EncryptedConnection::class, 'sessionId'))->setValue($conn, 0x5E5510A1);
+        return $conn;
     }
 
     /**

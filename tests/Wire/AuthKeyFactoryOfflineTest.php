@@ -114,7 +114,7 @@ class AuthKeyFactoryOfflineTest extends TestCase
         $this->assertSame('server_DH_inner_data', $innerDh['_']);
         $this->assertSame(3, $innerDh['g']);
         $this->assertSame(256, strlen($innerDh['dh_prime']));
-        $this->assertStringStartsWith('c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c1', bin2hex($innerDh['dh_prime']));
+        $this->assertSame(AuthKeyFactory::KNOWN_DH_PRIME_HEX, bin2hex($innerDh['dh_prime']));
         $this->assertSame(256, strlen($innerDh['g_a']));
         $this->assertStringStartsWith('8539db1e497692ee8bd112463f5f2669', bin2hex($innerDh['g_a']));
         $this->assertSame(1783001185, $innerDh['server_time']);

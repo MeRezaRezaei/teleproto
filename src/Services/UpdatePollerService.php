@@ -117,6 +117,18 @@ class UpdatePollerService
     }
 
     /**
+     * Sleep $seconds in stop()-responsive chunks: a FLOOD_WAIT backoff can be
+     * up to MAX_BACKOFF_SECONDS (an hour), and stop() must take effect within
+     * one chunk instead of after the whole uninterruptible sleep.
+     */
+    protected function interruptibleSleep(int $seconds): void
+    {
+        for ($elapsed = 0; $elapsed < $seconds && $this->running; $elapsed += self::MIN_BACKOFF_SECONDS) {
+            sleep(self::MIN_BACKOFF_SECONDS);
+        }
+    }
+
+    /**
      * Poll a Bot API client in a loop.
      *
      * @param BotClient $bot
@@ -149,7 +161,7 @@ class UpdatePollerService
                 if (!$this->running) {
                     break;
                 }
-                sleep(self::secondsToWait($e));
+                $this->interruptibleSleep(self::secondsToWait($e));
             }
         }
     }
@@ -203,7 +215,7 @@ class UpdatePollerService
                 if (!$this->running) {
                     break;
                 }
-                sleep(self::secondsToWait($e));
+                $this->interruptibleSleep(self::secondsToWait($e));
             }
         }
     }

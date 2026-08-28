@@ -49,7 +49,7 @@ class ClientLiveModeTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
-        self::setConn($client, new EncryptedConnection($session, $clientSock));
+        self::setConn($client, self::pinnedConn(new EncryptedConnection($session, $clientSock)));
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
             'req_msg_id' => 7,
             'result' => ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2],
@@ -106,7 +106,7 @@ class ClientLiveModeTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $session = new SessionData(dcId: 2, authKey: random_bytes(256));
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
-        self::setConn($client, new EncryptedConnection($session, $clientSock));
+        self::setConn($client, self::pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         fclose($serverSock); // server side vanishes: the next call hits EOF
 
@@ -126,7 +126,7 @@ class ClientLiveModeTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
-        self::setConn($client, new EncryptedConnection($session, $clientSock));
+        self::setConn($client, self::pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         // rpc_error-encrypted canned response (same helper pattern as EncryptedConnectionTest)
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
@@ -171,6 +171,16 @@ class ClientLiveModeTest extends TestCase
             seqNo: 1,
             toServer: false
         )));
+    }
+
+    /**
+     * Pins the connection's random session_id to the fixed id the seed helper
+     * encrypts with (decryptPacket enforces the session_id echo).
+     */
+    private static function pinnedConn(EncryptedConnection $conn): EncryptedConnection
+    {
+        (new \ReflectionProperty(EncryptedConnection::class, 'sessionId'))->setValue($conn, 0x5E5510A1);
+        return $conn;
     }
 
     private static function setConn(Client $client, EncryptedConnection $conn): void

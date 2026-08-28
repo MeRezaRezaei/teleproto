@@ -21,9 +21,17 @@ use RuntimeException;
  */
 class KeepaliveTest extends TestCase
 {
-    protected function setUp(): void
+    /** session_id the fake-server seed() helper encrypts with; decryptPacket enforces the echo. */
+    private const SEED_SESSION_ID = 0x5E5510A1;
+
+    /**
+     * Pins the connection's random session_id to the fixed id seed() uses, so
+     * the enforced session_id check passes for pre-seeded canned frames.
+     */
+    private function pinnedConn(EncryptedConnection $conn): EncryptedConnection
     {
-        EncryptedConnection::registerPingSchema(); // pong/ping_delay_disconnect must be encodable in seeds
+        (new \ReflectionProperty(EncryptedConnection::class, 'sessionId'))->setValue($conn, self::SEED_SESSION_ID);
+        return $conn;
     }
 
     /**
@@ -39,13 +47,14 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new SeededPingIdConnection($session, $clientSock));
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc())); // init the conn first
         $this->assertSame(self::nearestDc(), $conn->call('help.getNearestDc'));
         $this->decryptRequest($serverSock, $authKey); // drain the invokeWithLayer-wrapped init request
 
         $pongPingId = 0x0BADF00D;
+        SeededPingIdConnection::$pingId = $pongPingId; // pong must echo this exact id (validated by ping())
         $this->seed($serverSock, $authKey, TLEncoder::encodeObject('pong', [
             'msg_id' => 7, 'ping_id' => $pongPingId,
         ])); // real DCs answer with a BARE pong service message, not an rpc_result
@@ -55,10 +64,11 @@ class KeepaliveTest extends TestCase
 
         $req = $this->decryptRequest($serverSock, $authKey);
         $this->assertSame(pack('V', 0xf3427b8c), substr($req['payload'], 0, 4)); // ping_delay_disconnect golden id
-        $this->assertGreaterThan(0, unpack('P', substr($req['payload'], 4, 8))[1]); // random ping_id:long
+        $this->assertSame($pongPingId, unpack('P', substr($req['payload'], 4, 8))[1]); // threaded ping_id:long
         $this->assertSame(50, unpack('V', substr($req['payload'], 12, 4))[1]); // default disconnect_delay:int
 
         // custom disconnect delay reaches the wire
+        SeededPingIdConnection::$pingId = 1;
         $this->seed($serverSock, $authKey, TLEncoder::encodeObject('pong', [
             'msg_id' => 8, 'ping_id' => 1,
         ]));
@@ -77,7 +87,7 @@ class KeepaliveTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session, live: true));
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new SeededPingIdConnection($session, $clientSock));
         self::setConn($client, $conn);
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
@@ -89,6 +99,7 @@ class KeepaliveTest extends TestCase
         $prop->setValue($conn, microtime(true) - 60.0);
         $this->assertGreaterThan(45.0, $conn->idleSeconds());
 
+        SeededPingIdConnection::$pingId = 5; // lazy keepalive ping must receive an echoing pong
         $this->seed($serverSock, $authKey, TLEncoder::encodeObject('pong', ['msg_id' => 7, 'ping_id' => 5]));
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
 
@@ -112,7 +123,7 @@ class KeepaliveTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session, live: true));
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
         self::setConn($client, $conn);
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
@@ -159,7 +170,10 @@ class KeepaliveTest extends TestCase
             {
                 $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
                 ($this->onDial)($pair[1]);
-                return new EncryptedConnection($session, $pair[0], $this->apiId);
+                $conn = new EncryptedConnection($session, $pair[0], $this->apiId);
+                // canned frames are seeded with the fixed session id; pin the echo
+                (new \ReflectionProperty(EncryptedConnection::class, 'sessionId'))->setValue($conn, 0x5E5510A1);
+                return $conn;
             }
         };
 
@@ -190,7 +204,7 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
         $this->assertSame(0, $conn->getServerSalt());
 
         $newSalt = 0x7AFEBABEDEADBEE;
@@ -209,7 +223,7 @@ class KeepaliveTest extends TestCase
 
         // a connection built on the same session starts from the persisted salt
         [$clientSock2, $serverSock2] = $this->socketPair();
-        $conn2 = new EncryptedConnection($session, $clientSock2);
+        $conn2 = $this->pinnedConn(new EncryptedConnection($session, $clientSock2));
         $this->assertSame($newSalt, $conn2->getServerSalt());
         $this->seed($serverSock2, $authKey, $this->cannedResult(self::nearestDc()));
         $this->assertSame(self::nearestDc(), $conn2->call('help.getNearestDc'));
@@ -227,7 +241,7 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = new EncryptedConnection($session, $clientSock);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
 
         $pushSalt = 0x7234567890ABCD;
         $this->seed($serverSock, $authKey,
@@ -327,5 +341,19 @@ class KeepaliveTest extends TestCase
     {
         $prop = new \ReflectionProperty(Client::class, 'conn');
         return $prop->getValue($client);
+    }
+}
+
+/**
+ * Deterministic ping_id seam: pongs must be pre-seeded into the socket before
+ * the blocking ping() runs, so the id it will send has to be known up front.
+ */
+class SeededPingIdConnection extends EncryptedConnection
+{
+    public static int $pingId = 1;
+
+    protected function newPingId(): int
+    {
+        return self::$pingId;
     }
 }

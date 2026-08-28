@@ -28,18 +28,6 @@ class EncryptedConnection
     public const LAYER = 227;
 
     /**
-     * MTProto keepalive constructors (core.telegram.org/mtproto/service_messages):
-     *   pong#347773c5 msg_id:long ping_id:long = Pong
-     *   ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong
-     * Registered lazily (not in TLRegistry::SCHEMA) so the ping surface stays
-     * owned by this class. Idempotent: re-registering overwrites identical entries.
-     */
-    public const PING_SCHEMA = [
-        'pong#347773c5 msg_id:long ping_id:long = Pong',
-        'ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong',
-    ];
-
-    /**
      * Transient push messages skipped while waiting for the rpc_result. Both
      * constructors are registered in TLRegistry, so their ids are looked up
      * there (msgs_ack msg_ids:Vector long = MsgsAck -> 0x62d6b459,
@@ -63,13 +51,6 @@ class EncryptedConnection
         $this->socket = $socket;
         $this->sessionId = (int)unpack('P', random_bytes(8))[1];
         $this->serverSalt = $session->serverSalt; // persisted salt survives reconnects
-    }
-
-    public static function registerPingSchema(): void
-    {
-        foreach (self::PING_SCHEMA as $line) {
-            TLRegistry::register($line);
-        }
     }
 
     public static function connect(SessionData $session, string $host, int $port = 443, float $timeout = 10.0): static
@@ -112,19 +93,38 @@ class EncryptedConnection
     }
 
     /**
-     * MTProto keepalive: ping_delay_disconnect with a random ping_id. The
+     * MTProto keepalive: ping_delay_disconnect with a fresh ping_id. The
      * server answers pong (same ping_id) and guarantees not to close the
      * connection for disconnect_delay seconds (MadelineProto PingLoop parity).
+     * The returned pong must echo the sent ping_id — a mismatch (or a missing
+     * ping_id) is a protocol violation and throws.
      *
      * @return array<string, mixed> the pong result (['_' => 'pong', 'msg_id' => ..., 'ping_id' => ...])
      */
     public function ping(int $disconnectDelay = 50): array
     {
-        self::registerPingSchema();
-        return $this->call('ping_delay_disconnect', [
-            'ping_id' => random_int(0, PHP_INT_MAX),
+        $pingId = $this->newPingId();
+        $pong = $this->call('ping_delay_disconnect', [
+            'ping_id' => $pingId,
             'disconnect_delay' => $disconnectDelay,
         ]);
+        if (!hash_equals((string) $pingId, (string) ($pong['ping_id'] ?? ''))) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: pong ping_id mismatch (sent %d, received %s)',
+                $pingId,
+                isset($pong['ping_id']) ? var_export($pong['ping_id'], true) : '(missing)'
+            ));
+        }
+        return $pong;
+    }
+
+    /**
+     * Fresh random ping_id for a keepalive ping (overridable seam for tests:
+     * pre-seeded pongs must know the id before the blocking call runs).
+     */
+    protected function newPingId(): int
+    {
+        return random_int(0, PHP_INT_MAX);
     }
 
     /**
@@ -257,7 +257,7 @@ class EncryptedConnection
                     throw RpcExceptionResolver::fromTransportCode($int32);
                 }
             }
-            $msg = PacketCodec::decryptPacket($frame, $this->session->authKey);
+            $msg = PacketCodec::decryptPacket($frame, $this->session->authKey, expectedSessionId: $this->sessionId);
             $payload = $msg["payload"];
 
             $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
