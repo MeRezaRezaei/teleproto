@@ -18,6 +18,7 @@ return [
     'api_id' => env('TELEGRAM_API_ID'),
     'api_hash' => env('TELEGRAM_API_HASH'),
     'dc_id' => (int)env('TELEGRAM_DC_ID', 2),
+    'live_mode' => env('TELEPROTO_LIVE', false),
 
     /*
     |--------------------------------------------------------------------------

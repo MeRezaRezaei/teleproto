@@ -42,6 +42,7 @@ class TeleprotoServiceProvider extends ServiceProvider
             $this->commands([
                 \MeRezaRezaei\Teleproto\Console\LoginCommand::class,
                 \MeRezaRezaei\Teleproto\Console\PollCommand::class,
+                \MeRezaRezaei\Teleproto\Console\DoctorCommand::class,
             ]);
         }
 
