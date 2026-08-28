@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PqFactorizer` (Pollard rho) with official doc vectors; live mode opt-in on `Client` (`->live()`).
 ### Changed
 - `ext-zlib` now required; inert proxy context removed from `StreamSocket` (direct connections only until tunneling ships).
-- Live network verification is pending environment access; offline verification uses official transcript byte vectors.
+- Live-verified against production Telegram DC2 (both 149.154.167.50 and .51): full DH handshake + encrypted `help.getNearestDc` in ~1.2s (`php examples/live-doctor.php`), cross-checked against MadelineProto as ground truth. Offline verification additionally uses official transcript byte vectors.
+- Abridged TCP transport (`0xef` + varint length/4) is the default wire framing — production DCs silently drop intermediate framing.
+- Handshake uses `p_q_inner_data_dc` (#a9f55f95) with RSA-PAD encryption (raw RSA over the temp_key/aes construction), required by current servers.
 
 ---
 
