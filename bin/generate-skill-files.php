@@ -95,7 +95,7 @@ $renderUsage = static function (TelegramMethod $m) use ($groupOf, $accessorOf, $
     // dispatch() is an INSTANCE method on TeleprotoClient (it resolves the
     // transport per method: 'mtproto' -> user(), 'bot-http' -> bot()), so the
     // example must construct/resolve a client first — never a static call.
-    $lines[] = '$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);   // or: new TeleprotoClient(apiId: …, apiHash: …)';
+    $lines[] = '$client = app(\MeRezaRezaei\Teleproto\Services\TeleprotoClient::class);   // or: new TeleprotoClient(defaultApiId: …, defaultApiHash: …)';
     $lines[] = '$result = $client->dispatch($request);';
 
     return $lines;
