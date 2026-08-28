@@ -62,19 +62,31 @@ function whoami(\MeRezaRezaei\Teleproto\Services\UserAccountScope $scope): array
     }
 }
 
-$envVars = \MeRezaRezaei\Teleproto\Support\EnvFile::read(__DIR__ . '/../.env');
-$apiId = (int) text(
-    'Telegram API ID',
-    placeholder: 'from https://my.telegram.org',
-    default: (string) ((int) ($envVars['TELEGRAM_API_ID'] ?? 0) ?: ''),
-    validate: fn (string $v) => ctype_digit($v) && (int) $v > 0 ? null : 'API ID must be a positive integer.'
-);
-$apiHash = text(
-    'Telegram API Hash',
-    placeholder: 'from https://my.telegram.org',
-    default: (string) ($envVars['TELEGRAM_API_HASH'] ?? ''),
-    validate: fn (string $v) => strlen($v) >= 30 ? null : 'API Hash looks too short.'
-);
+try {
+    $envVars = \MeRezaRezaei\Teleproto\Support\EnvFile::read(__DIR__ . '/../.env');
+} catch (Throwable $e) {
+    warning('.env could not be parsed — continuing with empty defaults: ' . $e->getMessage());
+    $envVars = [];
+}
+try {
+    $apiId = (int) text(
+        'Telegram API ID',
+        placeholder: 'from https://my.telegram.org',
+        default: (string) ((int) ($envVars['TELEGRAM_API_ID'] ?? 0) ?: ''),
+        validate: fn (string $v) => ctype_digit($v) && (int) $v > 0 ? null : 'API ID must be a positive integer.'
+    );
+    $apiHash = text(
+        'Telegram API Hash',
+        placeholder: 'from https://my.telegram.org',
+        default: (string) ($envVars['TELEGRAM_API_HASH'] ?? ''),
+        validate: fn (string $v) => strlen($v) >= 30 ? null : 'API Hash looks too short.'
+    );
+} catch (\Laravel\Prompts\Exceptions\NonInteractiveValidationException $e) {
+    // Non-interactive runs cannot retry a failed validation; render it styled
+    // instead of letting Prompts escalate to an uncaught fatal (stack trace).
+    error('VALIDATION FAILED — ' . $e->getMessage());
+    exit(1);
+}
 
 $auth = new TeleprotoAuthService();
 

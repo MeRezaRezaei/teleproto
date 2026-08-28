@@ -32,8 +32,7 @@ final class EnvFile
         foreach ($lines as $i => $line) {
             if (str_starts_with(ltrim($line), $prefix)) {
                 $lines[$i] = $key . '="' . $value . '"';
-                $found = true;
-                break;
+                $found = true; // no break: rewrite EVERY duplicate (regex-era replace semantics)
             }
         }
         if (!$found) {

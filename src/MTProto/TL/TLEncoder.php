@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\MTProto\TL;
 
+use InvalidArgumentException;
 use RuntimeException;
 
 class TLEncoder
@@ -72,15 +73,29 @@ class TLEncoder
 
     /**
      * BC wrapper kept for tests and external callers: [name, type] pairs in
-     * schema order, derived from the same parser the registry caches from.
-     * Conditional types render back as `flagWord.N?Type` for readability.
+     * schema order. Registered lines — including the generic wrappers
+     * (invokeWithLayer/initConnection) whose `X:Type`/`!X` tokens the strict
+     * parser rejects — resolve through TLRegistry's cached parse (same
+     * degraded path the registry itself uses); unregistered lines strict-parse
+     * via TLSignatureParser. Conditional types render back as `flagWord.N?Type`
+     * for readability. Name extraction uses string functions only — no regex.
      *
      * @return list<array{0: string, 1: string}> [name, type] pairs in schema order
      */
     public static function fieldsOf(string $signature): array
     {
+        $name = explode(' ', trim($signature), 2)[0];
+        $hash = strpos($name, '#');
+        if ($hash !== false) {
+            $name = substr($name, 0, $hash);
+        }
+        try {
+            $parsed = TLRegistry::signatureOf($name);
+        } catch (InvalidArgumentException) {
+            $parsed = TLSignatureParser::parse($signature);
+        }
         $fields = [];
-        foreach (TLSignatureParser::parse($signature)->fields as $field) {
+        foreach ($parsed->fields as $field) {
             $type = $field['flagWord'] !== null
                 ? $field['flagWord'] . '.' . $field['bit'] . '?' . $field['type']
                 : $field['type'];

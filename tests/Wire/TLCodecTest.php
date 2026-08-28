@@ -11,6 +11,23 @@ use PHPUnit\Framework\TestCase;
 
 class TLCodecTest extends TestCase
 {
+    public function testFieldsOfHandlesGenericWrapperSignaturesViaRegistry(): void
+    {
+        // F1 pin: the two registered wrapper lines (query:!X) resolve through the
+        // registry's degraded parse — the old regex-era behavior — instead of throwing.
+        $layer = TLEncoder::fieldsOf('invokeWithLayer X:Type layer:int query:!X = X');
+        $this->assertSame([['layer', 'int'], ['query', '!X']], $layer); // X:Type decl skipped
+
+        $init = TLEncoder::fieldsOf(TLRegistry::signature('initConnection'));
+        $this->assertContains(['api_id', 'int'], $init);
+        $this->assertContains(['proxy', 'flags.0?InputClientProxy'], $init); // conditional re-rendered
+        $this->assertNotContains(['X', 'Type'], $init);
+        $this->assertContains(['query', '!X'], $init);
+
+        // unregistered lines still strict-parse through TLSignatureParser
+        $this->assertSame([['a', 'int']], TLEncoder::fieldsOf('madeUpCtor a:int = MadeUp'));
+    }
+
     public function testResPQRoundTrip(): void
     {
         $nonce = random_bytes(16);
