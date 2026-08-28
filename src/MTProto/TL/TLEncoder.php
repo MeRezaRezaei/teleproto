@@ -35,8 +35,8 @@ class TLEncoder
                 continue;
             }
             if ($field['flagWord'] !== null && isset($flagWords[$field['flagWord']])) {
-                if (!array_key_exists($fieldName, $args) || $args[$fieldName] === null) {
-                    continue; // bit clear: field absent from the wire
+                if (!array_key_exists($fieldName, $args) || $args[$fieldName] === null || $args[$fieldName] === false) {
+                    continue; // bit clear: absent, null, or explicit false (?true semantics: only true sets the bit)
                 }
                 $bit = 1 << $field['bit'];
                 if (($flagWords[$field['flagWord']] & $bit) === 0) {
