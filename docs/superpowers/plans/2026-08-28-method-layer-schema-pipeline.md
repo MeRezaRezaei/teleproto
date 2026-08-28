@@ -219,7 +219,12 @@ $unescape = static fn (string $s): string => str_replace(['&lt;', '&gt;', '&amp;
 foreach ($methods as $name => &$m) {
     $m['description'] = (string) ($docsMap["method_{$name}"] ?? '');
     foreach ($m['params'] as $i => $p) {
-        $key = "method_{$name}_param_{$p['name']}_type_{$p['type']}";
+        // conditional params are keyed WITH the flag prefix in extracted.json:
+        // method_X_param_no_webpage_type_flags.1?true  (non-conditional: ..._type_true-less)
+        $typePart = $p['flag_word'] !== null
+            ? "{$p['flag_word']}.{$p['bit']}?{$p['type']}"
+            : $p['type'];
+        $key = "method_{$name}_param_{$p['name']}_type_{$typePart}";
         $m['params'][$i]['description'] = isset($docsMap[$key]) ? $unescape((string) $docsMap[$key]) : '';
     }
 }
