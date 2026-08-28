@@ -35,19 +35,17 @@ class Client
 
     public const DEFAULT_PORT = 443;
 
-    protected ?SessionData $session = null;
     protected ?array $proxyConfig = null;
     /** Tri-state: null = defer to config('teleproto.live_mode') at first use; true/false = explicit. */
     private ?bool $live = null;
     private ?EncryptedConnection $conn = null;
 
     public function __construct(
-        public int $apiId,
-        public string $apiHash,
-        ?SessionData $session = null,
+        public int $apiId = 0,
+        public string $apiHash = '',
+        public ?SessionData $session = null,
         ?bool $live = null
     ) {
-        $this->session = $session;
         $this->live = $live;
     }
 

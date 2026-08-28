@@ -164,6 +164,7 @@ try {
 
             while (true) {
                 $verify = ask('Login code (Telegram app / SMS): ');
+                $signIn = null;
                 try {
                     $signIn = $auth->signInWithCode($user, $phone, $code['phone_code_hash'], $verify);
                     break; // sign in succeeded
@@ -192,8 +193,7 @@ try {
                 }
             }
 
-            $me = whoami($user);
-            celebrate(['user' => $me], $user->session->exportString(), 'User (phone)');
+            celebrate($signIn ?? [], $user->session->exportString(), 'User (phone)');
             break;
 
         case '3':

@@ -43,6 +43,10 @@ switch ($action) {
         });
         break;
 
+    case 'me':
+        require __DIR__ . '/test-me.php';
+        break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -54,6 +58,7 @@ Available commands:
   ./bin/teleproto login    Interactive MTProto Login (User Phone, QR Link, Bot)
   ./bin/teleproto doctor   Test MTProto connection to Telegram DC2
   ./bin/teleproto poll     Run local long-polling for Telegram bot
+  ./bin/teleproto me       Test and inspect your saved user session
 
 HELP;
         break;

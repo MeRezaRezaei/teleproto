@@ -28,6 +28,25 @@ class UserAccountScope
     ) {}
 
     /**
+     * Always returns the live session from the underlying MTProto client.
+     */
+    public function getSession(): SessionData
+    {
+        return $this->mtproto->session ?? $this->session;
+    }
+
+    /**
+     * Magic getter to ensure $scope->session always returns the active live SessionData.
+     */
+    public function __get(string $name): mixed
+    {
+        if ($name === 'session') {
+            return $this->mtproto->session ?? $this->session;
+        }
+        return null;
+    }
+
+    /**
      * Executes any raw Telegram MTProto method directly (Layer 227+).
      *
      * @param string $method MTProto method name (e.g. 'messages.sendMessage', 'users.getFullUser')
@@ -36,7 +55,11 @@ class UserAccountScope
      */
     public function call(string $method, array $params = []): array
     {
-        return $this->mtproto->call($method, $params);
+        $res = $this->mtproto->call($method, $params);
+        if ($this->mtproto->session !== null) {
+            $this->session = $this->mtproto->session;
+        }
+        return $res;
     }
 
     /**

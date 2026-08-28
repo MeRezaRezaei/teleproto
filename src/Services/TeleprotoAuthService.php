@@ -89,11 +89,18 @@ class TeleprotoAuthService
         string $phoneCodeHash,
         string $code
     ): array {
-        return $user->call('auth.signIn', [
+        $res = $user->call('auth.signIn', [
             'phone_number'    => $phone,
             'phone_code_hash' => $phoneCodeHash,
             'phone_code'      => $code,
         ]);
+
+        if (isset($res['user']['id']) && $user->mtproto->session !== null) {
+            $user->mtproto->session->userId = (int)$res['user']['id'];
+            $user->session->userId = (int)$res['user']['id'];
+        }
+
+        return $res;
     }
 
     /**
@@ -108,9 +115,16 @@ class TeleprotoAuthService
         $passwordInfo = $user->call('account.getPassword');
         $srpProof = $user->mtproto->compute2faProof($passwordInfo, $password);
 
-        return $user->call('auth.checkPassword', [
+        $res = $user->call('auth.checkPassword', [
             'password' => array_merge(['_' => 'inputCheckPasswordSRP'], $srpProof),
         ]);
+
+        if (isset($res['user']['id']) && $user->mtproto->session !== null) {
+            $user->mtproto->session->userId = (int)$res['user']['id'];
+            $user->session->userId = (int)$res['user']['id'];
+        }
+
+        return $res;
     }
 
     /**
