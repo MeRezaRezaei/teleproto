@@ -85,6 +85,8 @@ mkdir -p schema/sources
 curl -fsSL https://raw.githubusercontent.com/telegramdesktop/tdesktop/dev/Telegram/SourceFiles/mtproto/scheme/api.tl -o schema/sources/api.tl
 curl -fsSL https://raw.githubusercontent.com/telegramdesktop/tdesktop/dev/Telegram/SourceFiles/mtproto/scheme/mtproto.tl -o schema/sources/mtproto.tl
 curl -fsSL https://core.telegram.org/api/errors.json -o schema/sources/errors.json
+# Official doc descriptions (MadelineProto's extraction of the docs) — optional enrichment
+curl -fsSL https://raw.githubusercontent.com/danog/MadelineProto/master/extracted.json -o schema/sources/extracted.json
 head -3 schema/sources/api.tl   # sanity: starts with // scheme tl ...
 ```
 
@@ -140,7 +142,7 @@ class MtprotoSchemaTest extends TestCase
 
 - [ ] **Step 4: Implement generator + run it**
 
-`bin/generate-method-schema.php` core (complete file; no regex):
+`bin/generate-method-schema.php` (complete file; no regex):
 
 ```php
 #!/usr/bin/env php
@@ -206,21 +208,35 @@ foreach ($methods as &$m) {
 }
 unset($m);
 
-ksort($methods);
-artifact_put("{$root}/schema/methods-mtproto.json", [
-    '_generated' => true,
-    'api' => 'mtproto',
-    'layer' => $layer,
-    'source' => 'tdesktop dev api.tl + mtproto.tl + core.telegram.org/api/errors.json',
-    'methods' => $methods,
-]);
-
-printf("methods-mtproto.json: %d methods, layer %d\n", count($methods), $layer);
-
-function artifact_put(string $path, array $data): void
-{
-    file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+// 3) enrich with official doc descriptions (MadelineProto extracted.json)
+// Flat map: method_<name> and method_<name>_param_<field>_type_<type> (HTML-escaped keys)
+$docsMap = [];
+$docsPath = "{$root}/schema/sources/extracted.json";
+if (file_exists($docsPath)) {
+    $docsMap = (array) json_decode((string) file_get_contents($docsPath), true);
 }
+$unescape = static fn (string $s): string => str_replace(['&lt;', '&gt;', '&amp;'], ['<', '>', '&'], $s);
+foreach ($methods as $name => &$m) {
+    $m['description'] = (string) ($docsMap["method_{$name}"] ?? '');
+    foreach ($m['params'] as $i => $p) {
+        $key = "method_{$name}_param_{$p['name']}_type_{$p['type']}";
+        $m['params'][$i]['description'] = isset($docsMap[$key]) ? $unescape((string) $docsMap[$key]) : '';
+    }
+}
+unset($m);
+
+ksort($methods);
+file_put_contents(
+    "{$root}/schema/methods-mtproto.json",
+    json_encode([
+        '_generated' => true,
+        'api' => 'mtproto',
+        'layer' => $layer,
+        'source' => 'tdesktop dev api.tl + mtproto.tl + core.telegram.org/api/errors.json + MadelineProto extracted.json',
+        'methods' => $methods,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+);
+printf("methods-mtproto.json: %d methods, layer %d\n", count($methods), $layer);
 ```
 
 Run: `php bin/generate-method-schema.php` → then `vendor/bin/phpunit tests/Schema/MtprotoSchemaTest.php` → PASS.
@@ -234,21 +250,27 @@ git commit -m "feat(schema): derive full mtproto method schema from tdesktop sou
 
 ---
 
-### Task 2 (G1): Bot API schema extractor (DOM, zero regex)
+### Task 2 (G1): Bot API schema from PaulSonOfLars api.json
+
+**Reinvention audit outcome:** the DOM-scraper design is DEAD — **PaulSonOfLars/telegram-bot-api-spec** (MIT, 144★, auto-updated daily by CI) publishes `api.json` with exactly the structure we need: `{methods: {name: {href, returns, description[], fields: [{name, types[], required, description}]}}}`. We consume their scraping pipeline's output instead of running our own.
 
 **Files:**
-- Create: `schema/sources/bots-api.html` (snapshot), `bin/extract-botapi-schema.php`, `schema/methods-botapi.json` (output)
+- Create: `schema/sources/botapi-spec.json` (fetched), `bin/generate-botapi-schema.php`, `schema/methods-botapi.json` (output)
 - Test: `tests/Schema/BotApiSchemaTest.php`
 
 **Interfaces:**
-- Consumes: DOMDocument only.
-- Produces: `schema/methods-botapi.json` canonical bot-http format.
+- Consumes: the committed api.json only (no network in tests/generators).
+- Produces: `schema/methods-botapi.json` canonical bot-http format, enriched with per-param `description` (from api.json) — Task 6's skill tables get docs text for free.
 
-- [ ] **Step 1: Snapshot source + failing test**
+- [ ] **Step 1: Fetch + commit source**
 
 ```bash
-curl -fsSL https://core.telegram.org/bots/api -o schema/sources/bots-api.html
+curl -fsSL https://raw.githubusercontent.com/PaulSonOfLars/telegram-bot-api-spec/main/api.json -o schema/sources/botapi-spec.json
+php -r '$j=json_decode(file_get_contents("schema/sources/botapi-spec.json"),true); echo "methods: ",count($j["methods"]),"\n"; echo "sendMessage fields: ",count($j["methods"]["sendMessage"]["fields"]),"\n";'
 ```
+Expected: 100+ methods; sendMessage fields > 5.
+
+- [ ] **Step 2: Write the failing test**
 
 ```php
 <?php
@@ -273,43 +295,87 @@ class BotApiSchemaTest extends TestCase
         $this->assertSame('bot-http', $a['api']);
         $this->assertGreaterThan(150, count($a['methods']));
         $send = $a['methods']['sendMessage'];
-        $this->assertContains('https://core.telegram.org/bots/api#sendmessage', [$send['docs']]);
+        $this->assertSame('https://core.telegram.org/bots/api#sendmessage', $send['docs']);
         $this->assertContains('chat_id', $send['required']);
         $this->assertContains('text', $send['required']);
-        $this->assertSame('getMe', $a['methods']['getMe']['docs'] === '' ? 'getMe' : 'getMe'); // getMe exists
         $this->assertArrayHasKey('getMe', $a['methods']);
+        // per-param descriptions carried through from api.json
+        $chatId = array_values(array_filter($send['params'], fn (array $p) => $p['name'] === 'chat_id'))[0];
+        $this->assertNotSame('', $chatId['description'] ?? '');
     }
 }
 ```
 
-- [ ] **Step 2: Run — FAIL** (artifact missing).
+- [ ] **Step 3: Run — FAIL** (artifact missing).
 
-- [ ] **Step 3: Implement extractor** — the docs page structure: each method is an `<h4><a class="anchor" href="#sendmessage">…</a></h4>` (or `<a name=...>`) heading followed by a `<p>` description and a `<table>` of parameters (`<td><code>chat_id</code></td><td>Integer | String</td><td>Required…</td>`). Walk with DOMDocument:
+- [ ] **Step 4: Implement transformer + run**
+
+`bin/generate-botapi-schema.php` (complete; pure array transforms, zero regex, zero DOM):
 
 ```php
-$doc = new DOMDocument();
-libxml_use_internal_errors(true);
-$doc->loadHTMLFile("{$root}/schema/sources/bots-api.html");
-libxml_clear_errors();
+#!/usr/bin/env php
+<?php
 
-$typeMap = static fn (string $t): string => match (true) {
-    str_starts_with($t, 'Integer') => 'int',
-    str_starts_with($t, 'Float') => 'float',
-    str_starts_with($t, 'Boolean') || str_starts_with($t, 'True') || str_starts_with($t, 'False') => 'bool',
-    str_starts_with($t, 'Array') => 'array',
+declare(strict_types=1);
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$root = dirname(__DIR__);
+$spec = (array) json_decode((string) file_get_contents("{$root}/schema/sources/botapi-spec.json"), true);
+
+$typeMap = static fn (array $types): string => match (true) {
+    in_array('Integer', $types, true) => 'int',
+    in_array('Float', $types, true) || in_array('Float number', $types, true) => 'float',
+    in_array('Boolean', $types, true) => 'bool',
+    str_contains(implode('|', $types), 'Array') => 'array',
     default => 'string',
 };
+
+$methods = [];
+foreach (($spec['methods'] ?? []) as $name => $m) {
+    $params = [];
+    $required = [];
+    foreach (($m['fields'] ?? []) as $f) {
+        $params[] = [
+            'name' => (string) $f['name'],
+            'type' => $typeMap((array) ($f['types'] ?? [])),
+            'required' => (bool) ($f['required'] ?? false),
+            'description' => (string) ($f['description'] ?? ''),
+        ];
+        if (!empty($f['required'])) {
+            $required[] = (string) $f['name'];
+        }
+    }
+    $methods[$name] = [
+        'docs' => (string) ($m['href'] ?? "https://core.telegram.org/bots/api#{$name}"),
+        'description' => implode(' ', (array) ($m['description'] ?? [])),
+        'params' => $params,
+        'required' => $required,
+        'returns' => (array) ($m['returns'] ?? []),
+        'errors' => [],
+    ];
+}
+ksort($methods);
+
+file_put_contents(
+    "{$root}/schema/methods-botapi.json",
+    json_encode([
+        '_generated' => true,
+        'api' => 'bot-http',
+        'source' => 'PaulSonOfLars/telegram-bot-api-spec api.json',
+        'methods' => $methods,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+);
+printf("methods-botapi.json: %d methods\n", count($methods));
 ```
 
-For each `h4` whose first `a` child exists: method name = heading text; anchor = `a->getAttribute('href')` (strip leading `#` via `str_starts_with`/`substr`); the FOLLOWING sibling table (walk `nextSibling` skipping whitespace text nodes) supplies params — cells: name (`code` text), type string, "Required" detection via `str_contains($descCell->textContent, 'Required. ')` for the required flag. Only LOWER-camel first letter, single-word names count (the page also uses h4 for types like `Message` — filter: method headings' anchor hrefs start with a lowercase letter; type anchors start uppercase). Emit canonical JSON with `docs = https://core.telegram.org/bots/api#<anchor>`.
+Run: `php bin/generate-botapi-schema.php && vendor/bin/phpunit tests/Schema/BotApiSchemaTest.php` → PASS.
 
-Run: `php bin/extract-botapi-schema.php && vendor/bin/phpunit tests/Schema/BotApiSchemaTest.php` → PASS. (If page structure differs from the assumption, inspect with `php -r` DOM dumps — adjust selectors, never weaken the spot-entry assertions.)
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add schema/sources/bots-api.html bin/extract-botapi-schema.php schema/methods-botapi.json tests/Schema/BotApiSchemaTest.php
-git commit -m "feat(schema): derive bot-http method schema from official docs snapshot via DOM"
+git add schema/sources/botapi-spec.json bin/generate-botapi-schema.php schema/methods-botapi.json tests/Schema/BotApiSchemaTest.php
+git commit -m "feat(schema): derive bot-http method schema from PaulSonOfLars api.json"
 ```
 
 ---
@@ -590,6 +656,20 @@ class SkillFilesTest extends TestCase
 - **Step 2: FAIL** → **Step 3: Implement** (10 lines as above) → **Step 4: full gates** → **Step 5: Commit**: `feat(client): dispatch() routes builder requests by catalog api kind`
 
 ---
+
+## Reinvention-Audit Addendum (2026-08-28, pre-execution)
+
+Searched Context7, GitHub, and local vendor for existing tools before executing:
+
+| Plan component | Existing tool | Ruling |
+|---|---|---|
+| No-regex gate (was: hand-rolled string-scan test) | **`spaze/phpstan-disallowed-calls`** (MIT, 690+ commits) | **ADOPT** — static rule catches `preg_*` in all code paths; Task 6 rewritten around it |
+| Bot-API extractor (was: DOM scraper of docs HTML) | **`PaulSonOfLars/telegram-bot-api-spec` `api.json`** (MIT, 144★, daily CI updates) | **ADOPT** — Task 2 rewritten as a fetch+transform; scraping pipeline deleted from the plan |
+| MTProto schema descriptions | **MadelineProto `extracted.json`** (official docs text, flat map) | **ADOPT** — merged in Task 1 as `description` enrichment; skill tables get official param docs free |
+| TL parser lib (searched: none exists standalone for PHP) | — | Tokenizer stays ours (confirmed niche) |
+| PEM/DER handling | phpseclib (already dep) | Stays; `openssl_pkey_get_details` rejected (no DER output — hand-ASN.1 would be reinvention) |
+| Structured schema diff | `sebastian/diff` (already installed) | **REJECT for semantics** (text differ; added/removed/changed-method logic stays in `SchemaDiffer`) — may render report bodies |
+| QR / Dotenv / Prompts / Http | chillerlan, vlucas, laravel | Already adopted in prior commits |
 
 ## Parallel Dispatch Summary
 

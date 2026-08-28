@@ -712,56 +712,44 @@ git add src/MTProto/TL/ && git commit -m "refactor(tl): parse-once ParsedSignatu
 
 ## GROUP G3 — after G1 + G2
 
-### Task 6 (G3): The no-regex architecture gate
+### Task 6 (G3): The no-regex static-analysis gate
+
+**Reinvention audit outcome:** a maintained PHPStan extension does this better than any hand-rolled test — **`spaze/phpstan-disallowed-calls`** (MIT, 690+ commits) forbids function calls statically, across *all* code paths, not just those tests execute.
 
 **Files:**
-- Create: `tests/Architecture/NoRegexTest.php`
+- Modify: `composer.json`, `composer.lock`, `phpstan.neon.dist`
+- Delete: none (the previously drafted `tests/Architecture/NoRegexTest.php` is NOT created — superseded)
 
-**Interfaces:** Consumes nothing; produces the enforcement the spec demands.
+**Interfaces:** Produces: `composer analyse` fails on any `preg_*` call under `src/` with a custom message; `bin/` + `examples/` exempted.
 
-- [ ] **Step 1: Write the test**
+- [ ] **Step 1: Install + configure**
 
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace MeRezaRezaei\Teleproto\Tests\Architecture;
-
-use PHPUnit\Framework\TestCase;
-
-/**
- * Spec §A: zero regex in src/. This gate fails if anyone reintroduces preg_*.
- */
-class NoRegexTest extends TestCase
-{
-    public function testSrcContainsNoRegexCalls(): void
-    {
-        $root = dirname(__DIR__, 2) . '/src';
-        $offenders = [];
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
-        foreach ($it as $file) {
-            if ($file->getExtension() !== 'php') {
-                continue;
-            }
-            $content = (string) file_get_contents($file->getPathname());
-            foreach (['preg_match', 'preg_replace', 'preg_split', 'preg_grep', 'preg_quote', 'preg_filter'] as $fn) {
-                if (str_contains($content, $fn)) {
-                    $offenders[] = $file->getPathname() . ' uses ' . $fn;
-                }
-            }
-        }
-        $this->assertSame([], $offenders, "src/ must stay regex-free (spec 2026-08-28 §A):\n" . implode("\n", $offenders));
-    }
-}
+```bash
+composer require --dev spaze/phpstan-disallowed-calls --quiet
 ```
 
-- [ ] **Step 2: Run — verify failure**
+Append to `phpstan.neon.dist`:
 
-Run: `vendor/bin/phpunit tests/Architecture/NoRegexTest.php`
-Expected: FAIL listing any surviving `preg_` sites (there must be zero after Tasks 1-5; if any remain, fix them now — string-function equivalents per spec — before proceeding).
+```neon
+    excludesPaths:
+        - bin
+        - examples
+includes:
+    - vendor/spaze/phpstan-disallowed-calls/extension.neon
+parameters:
+    disallowedFunctionCalls:
+        -
+            function: 'preg_.+'
+            message: 'src/ is regex-free by spec 2026-08-28 §A — use sscanf/string functions/the TL tokenizer'
+```
 
-- [ ] **Step 3: Run full gates**
+(If `excludesPaths` placement fights the existing config, use the extension's `allowInPaths` on `bin/*`, `examples/*` instead — both documented in the extension README.)
+
+- [ ] **Step 2: Verify the gate fires**
+
+Temporary: add `preg_match('/x/','x');` to any src file → `vendor/bin/phpstan analyse --no-progress` must report the disallowed call with the custom message. Remove the sabotage line afterwards. Run again → `[OK] No errors`.
+
+- [ ] **Step 3: Full gates**
 
 Run: `vendor/bin/phpunit && vendor/bin/phpstan analyse --no-progress && ./bin/teleproto test-e2e`
 Expected: all green.
@@ -769,11 +757,18 @@ Expected: all green.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/Architecture/NoRegexTest.php
-git commit -m "feat(arch): no-regex gate for src/ per hardening spec"
+git add composer.json composer.lock phpstan.neon.dist
+git commit -m "feat(arch): forbid preg_* via phpstan-disallowed-calls per hardening spec"
 ```
 
 ---
+
+## Reinvention-Audit Addendum (2026-08-28, pre-execution)
+
+| Plan component | Existing tool | Ruling |
+|---|---|---|
+| No-regex gate (was: hand-rolled string-scan test) | **`spaze/phpstan-disallowed-calls`** (MIT, 690+ commits) | **ADOPT** — Task 6 rewritten around the static rule (all code paths, custom message, path exemptions) |
+| TL parser / sscanf / phpseclib / Dotenv choices | searched Context7 + packagist | No standalone PHP TL parser exists (confirmed niche — tokenizer stays ours); other choices already stable-lib maximal |
 
 ## Parallel Dispatch Summary
 
