@@ -1,0 +1,4 @@
+{
+    "mtproto": ["messages.sendMessage", "messages.getHistory", "messages.search", "messages.readHistory", "messages.sendReaction", "messages.getDialogs", "messages.forwardMessages", "messages.deleteMessages", "users.getUsers", "users.getFullUser", "contacts.getContacts", "contacts.importContacts", "contacts.search", "account.getPassword", "auth.sendCode", "auth.signIn", "auth.checkPassword", "auth.exportLoginToken", "auth.importBotAuthorization", "help.getNearestDc"],
+    "bot-http": ["getMe", "sendMessage", "sendPhoto", "sendDocument", "sendMediaGroup", "editMessageText", "deleteMessage", "answerCallbackQuery", "setWebhook", "getUpdates"]
+}
