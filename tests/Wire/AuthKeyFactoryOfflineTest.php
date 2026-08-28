@@ -129,4 +129,19 @@ class AuthKeyFactoryOfflineTest extends TestCase
         $this->expectExceptionMessage('SHA1');
         AuthKeyFactory::decodeHashPrefixed($corrupted);
     }
+
+    public function testFingerprintOfEachBundledKeyStaysStable(): void
+    {
+        $bundle = file_get_contents(__DIR__ . '/../../src/MTProto/resources/telegram_public_key.pub');
+        $this->assertNotFalse($bundle);
+        $fps = [];
+        foreach (explode('-----END RSA PUBLIC KEY-----', (string) $bundle) as $chunk) {
+            if (!str_contains($chunk, 'BEGIN')) {
+                continue;
+            }
+            $pem = $chunk . '-----END RSA PUBLIC KEY-----';
+            $fps[] = sprintf('%016x', AuthKeyFactory::fingerprintOf($pem));
+        }
+        $this->assertSame(['05fd64de851d9dd0', '03268d20df9858b2'], $fps); // official transcript + test-DC keys
+    }
 }

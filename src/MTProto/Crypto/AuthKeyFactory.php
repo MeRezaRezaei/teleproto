@@ -278,27 +278,23 @@ class AuthKeyFactory
     }
 
     /**
-     * Extracts the PKCS#1 RSAPublicKey DER of the first RSA public key PEM
-     * block in $pem; non-RSA/SPKI inputs are normalized through phpseclib.
+     * Normalizes any supported public key input (PKCS#1 PEM, SPKI PEM, DER)
+     * to the PKCS#1 RSAPublicKey DER via phpseclib — no byte scraping.
+     * phpseclib loads the FIRST key when several PEM blocks are bundled.
      */
     protected static function pkcs1DerOf(string $pem): string
     {
-        if (preg_match('/-----BEGIN RSA PUBLIC KEY-----(.*?)-----END RSA PUBLIC KEY-----/s', $pem, $m)) {
-            $der = base64_decode((string)preg_replace('/\s+/', '', $m[1]), true);
-            if ($der === false) {
-                throw new RuntimeException('AuthKeyFactory: invalid base64 in RSA public key PEM');
+        $key = PublicKeyLoader::load($pem);
+        $pkcs1Pem = $key->toString('PKCS1');
+        $body = '';
+        foreach (explode("\n", $pkcs1Pem) as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '-----')) {
+                continue;
             }
-            return $der;
+            $body .= $line;
         }
-        $pkcs1 = PublicKeyLoader::load($pem)->toString('PKCS1');
-        if (!preg_match('/-----BEGIN RSA PUBLIC KEY-----(.*?)-----END RSA PUBLIC KEY-----/s', $pkcs1, $m)) {
-            throw new RuntimeException('AuthKeyFactory: unexpected RSA key format');
-        }
-        $der = base64_decode((string)preg_replace('/\s+/', '', $m[1]), true);
-        if ($der === false) {
-            throw new RuntimeException('AuthKeyFactory: invalid base64 in RSA public key PEM');
-        }
-        return $der;
+        return (string) base64_decode($body, true);
     }
 
     /** @return list<string> PEM blocks bundled in the resource file */
@@ -308,11 +304,26 @@ class AuthKeyFactory
         if ($contents === false) {
             throw new RuntimeException('AuthKeyFactory: bundled public key resource missing');
         }
-        preg_match_all('/-----BEGIN RSA PUBLIC KEY-----.*?-----END RSA PUBLIC KEY-----/s', $contents, $m);
-        if ($m[0] === []) {
+        $blocks = [];
+        $current = [];
+        foreach (explode("\n", $contents) as $line) {
+            $line = trim($line);
+            if ($current === []) {
+                if (str_starts_with($line, '-----BEGIN')) {
+                    $current[] = $line;
+                }
+                continue;
+            }
+            $current[] = $line;
+            if (str_starts_with($line, '-----END')) {
+                $blocks[] = implode("\n", $current);
+                $current = [];
+            }
+        }
+        if ($blocks === []) {
             throw new RuntimeException('AuthKeyFactory: no public keys found in resource file');
         }
-        return $m[0];
+        return $blocks;
     }
 
     protected static function bigToBytes(BigInteger $n): string
