@@ -69,19 +69,30 @@ final class RpcExceptionResolver
     {
         $message = strtoupper(trim($errorMessage));
 
-        // FLOOD_WAIT_X / FLOOD_PREMIUM_WAIT_X — https://core.telegram.org/api/errors#flood-wait-errors
-        if (preg_match('/^FLOOD(?:_PREMIUM)?_WAIT_(\d+)$/', $message, $m)) {
-            return new FloodWaitException((int)$m[1], $message, $errorCode);
+        // FLOOD_WAIT_X / FLOOD_PREMIUM_WAIT_X — sscanf, no regex
+        // (trailing %c rejects any suffix; count 1 = exactly one int consumed)
+        $seconds = 0;
+        $c = "\0";
+        foreach (['FLOOD_WAIT_%d', 'FLOOD_PREMIUM_WAIT_%d'] as $fmt) {
+            if (sscanf($message, $fmt . '%c', $seconds, $c) === 1) {
+                return new FloodWaitException($seconds, $message, $errorCode);
+            }
         }
 
         // FILE/PHONE/NETWORK/USER_MIGRATE_X — https://core.telegram.org/api/errors (303 SEE_OTHER)
-        if (preg_match('/^(?:FILE|PHONE|NETWORK|USER)_MIGRATE_(\d+)$/', $message, $m)) {
-            return new DcMigrationException(
-                (int)$m[1],
-                "{$message} — repeat the request at DC {$m[1]} (per https://core.telegram.org/api/datacenter)",
-                $errorCode,
-                null
-            );
+        $dc = 0;
+        $c = "\0";
+        foreach (['FILE_MIGRATE_', 'PHONE_MIGRATE_', 'NETWORK_MIGRATE_', 'USER_MIGRATE_'] as $pfx) {
+            if (str_starts_with($message, $pfx)
+                && sscanf($message, $pfx . '%d%c', $dc, $c) === 1
+                && $dc > 0 && $dc <= 5) {
+                return new DcMigrationException(
+                    $dc,
+                    "{$message} — repeat the request at DC {$dc} (per https://core.telegram.org/api/datacenter)",
+                    $errorCode,
+                    null
+                );
+            }
         }
 
         // Full official database first (all 780 documented errors, layer 227)

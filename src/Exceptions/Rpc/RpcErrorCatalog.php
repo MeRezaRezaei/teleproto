@@ -2358,13 +2358,39 @@ final class RpcErrorCatalog
         }
 
         foreach (self::templates() as $template => $descTemplate) {
-            $pattern = '/^' . str_replace('%d', '(\d+)', preg_quote($template, '/')) . '$/';
-            if (preg_match($pattern, $msg, $m)) {
-                array_shift($m);
-                return [$template, vsprintf($descTemplate, $m)];
+            if (self::templateMatches($template, $msg)) {
+                $value = self::templateValue($template, $msg);
+                return [$template, str_contains($descTemplate, '%d') ? sprintf($descTemplate, $value) : $descTemplate];
             }
         }
         return null;
+    }
+
+    /**
+     * Pure string-template match: PREFIX %d SUFFIX with the %d part being
+     * a non-empty run of ASCII digits (regex-free equivalent of the old
+     * anchored ^…(\d+)$ pattern).
+     */
+    private static function templateMatches(string $template, string $message): bool
+    {
+        $parts = explode('%d', $template); // e.g. ['SLOWMODE_WAIT_', '']
+        if (!str_starts_with($message, $parts[0])) {
+            return false;
+        }
+        $tail = substr($message, strlen($parts[0]));
+        $requiredSuffix = $parts[1] ?? '';
+        if (!str_ends_with($tail, $requiredSuffix)) {
+            return false;
+        }
+        $digits = substr($tail, 0, strlen($tail) - strlen($requiredSuffix));
+        return $digits !== '' && strspn($digits, '0123456789') === strlen($digits);
+    }
+
+    private static function templateValue(string $template, string $message): int
+    {
+        $parts = explode('%d', $template);
+        $tail = substr($message, strlen($parts[0]));
+        return (int) substr($tail, 0, strlen($tail) - strlen($parts[1] ?? ''));
     }
 
     /**
