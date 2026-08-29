@@ -132,6 +132,8 @@ class Client
      * @param string $method MTProto method name (e.g. 'messages.sendMessage', 'users.getFullUser')
      * @param array<string, mixed> $params
      * @return array<string, mixed>
+     * @throws \InvalidArgumentException when the method name is unknown to TLRegistry
+     * @throws RuntimeException on malformed params (pre-I/O; connection kept) or transport/protocol failures (connection evicted)
      */
     public function call(string $method, array $params = []): array
     {
@@ -148,6 +150,13 @@ class Client
                 'dc_id' => $this->session->dcId,
             ];
         }
+
+        // Pre-I/O validation: an encode failure (unknown method, malformed
+        // params) is a caller error, not a dead connection — it must not
+        // evict a healthy cached connection. EncryptedConnection::call
+        // (re)builds the body — fresh connections wrap it in invokeWithLayer,
+        // which encodes the same fields — so this pass is validation-only.
+        TLEncoder::encodeObject($method, $params);
 
         try {
             $conn = $this->ensureConnection();
@@ -178,7 +187,7 @@ class Client
      * @return array<string, array<string, mixed>> key => decoded result, input order preserved
      * @throws \InvalidArgumentException when a method name is unknown to TLRegistry
      * @throws TelegramException on rpc_error
-     * @throws RuntimeException on transport/protocol failures (connection evicted)
+     * @throws RuntimeException on bounds violations/malformed params (pre-I/O; connection kept) or transport/protocol failures (connection evicted)
      */
     public function callMany(array $requests): array
     {
@@ -204,18 +213,22 @@ class Client
             return $stub;
         }
 
+        // Pre-I/O validation — BEFORE any connection is touched, so caller
+        // errors never evict a healthy cached connection the way transport
+        // failures do. Bodies are built for EVERY request up front:
+        // TLRegistry validates each method name (unknown ->
+        // InvalidArgumentException naming it) and TLEncoder the params;
+        // then the batch bounds are asserted.
+        $bodies = [];
+        foreach ($requests as $key => $request) {
+            $bodies[$key] = TLEncoder::encodeObject($request['method'], $request['params']);
+        }
+        EncryptedConnection::assertBatchWithinBounds($bodies);
+
         try {
             $conn = $this->ensureConnection();
             if ($conn->idleSeconds() > self::KEEPALIVE_IDLE_SECONDS) {
                 $conn->ping(); // lazy keepalive before the batched round-trip
-            }
-
-            // Bodies are built for EVERY request up front: TLRegistry validates
-            // each method name (unknown -> InvalidArgumentException naming it)
-            // before any bytes hit the wire.
-            $bodies = [];
-            foreach ($requests as $key => $request) {
-                $bodies[$key] = TLEncoder::encodeObject($request['method'], $request['params']);
             }
 
             if (!$conn->isInited()) {

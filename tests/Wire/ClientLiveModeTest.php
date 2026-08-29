@@ -120,6 +120,42 @@ class ClientLiveModeTest extends TestCase
         $this->assertNull(self::connOf($client), 'dead connection must be evicted (close + null)');
     }
 
+    /**
+     * A pre-I/O encode failure in call() (known method, missing required
+     * field -> TLEncoder RuntimeException) is a caller error, not a dead
+     * connection: the cached connection must survive it and stay usable.
+     */
+    public function testEncodeFailureKeepsCachedConnection(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
+        $conn = self::pinnedConn(new EncryptedConnection($session, $clientSock));
+        (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
+        self::setConn($client, $conn);
+
+        try {
+            $client->call('ping'); // ping_id missing: encode-time failure, no bytes on the wire
+            $this->fail('expected RuntimeException for the missing field');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString("missing field 'ping_id'", $e->getMessage());
+        }
+
+        $this->assertSame($conn, self::connOf($client), 'encode failure must NOT evict the cached connection');
+
+        // Usability proof: the same connection answers a follow-up call.
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => 7,
+            'result' => ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2],
+        ]));
+        $this->assertSame('nearestDc', $client->call('help.getNearestDc')['_']);
+        $this->assertSame($conn, self::connOf($client));
+
+        $client->close();
+        fclose($serverSock);
+    }
+
     public function testLiveTelegramExceptionKeepsCachedConnection(): void
     {
         [$clientSock, $serverSock] = $this->socketPair();

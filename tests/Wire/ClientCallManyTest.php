@@ -182,6 +182,99 @@ class ClientCallManyTest extends TestCase
         fclose($serverSock);
     }
 
+    /**
+     * A pre-I/O encode failure (missing required field -> TLEncoder
+     * RuntimeException) is a caller error, not a dead connection: the cached
+     * connection must survive it and stay usable. The socket stays alive the
+     * whole time — nothing was ever sent on it.
+     */
+    public function testPreIoEncodeFailureKeepsCachedConnection(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
+        self::setConn($client, $conn);
+
+        try {
+            // 'ping' without ping_id: known method, malformed params — the
+            // encode loop must fail BEFORE any connection I/O.
+            $client->callMany(['bad' => ['method' => 'ping', 'params' => []]]);
+            $this->fail('expected RuntimeException for the missing field');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString("missing field 'ping_id'", $e->getMessage());
+        }
+
+        $this->assertSame($conn, self::connOf($client), 'encode failure must NOT evict the cached connection');
+
+        // Usability proof: the same connection answers a follow-up call.
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => 7,
+            'result' => self::nearestDcPayload(),
+        ]));
+        $this->assertSame(self::nearestDcPayload(), $client->call('help.getNearestDc'));
+        $this->assertSame($conn, self::connOf($client));
+
+        $client->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * Unknown method names throw InvalidArgumentException (TLRegistry) before
+     * any I/O — the healthy cached connection stays (regression guard for
+     * the pre-I/O-validation placement of the encode loop).
+     */
+    public function testUnknownMethodKeepsCachedConnection(): void
+    {
+        [$clientSock] = $this->socketPairHalf();
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
+        $conn = new EncryptedConnection($session, $clientSock);
+        self::setConn($client, $conn);
+
+        try {
+            $client->callMany(['bad' => ['method' => 'definitely.notARealMethod', 'params' => []]]);
+            $this->fail('expected InvalidArgumentException for the unknown method');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('definitely.notARealMethod', $e->getMessage());
+        }
+
+        $this->assertSame($conn, self::connOf($client), 'unknown method must NOT evict the cached connection');
+
+        $client->close();
+    }
+
+    /**
+     * A batch above the container message limit is a bounds violation — a
+     * caller error thrown pre-I/O — and must not evict the cached connection.
+     */
+    public function testOversizeBatchKeepsCachedConnection(): void
+    {
+        [$clientSock] = $this->socketPairHalf();
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
+        $conn = new EncryptedConnection($session, $clientSock);
+        self::setConn($client, $conn);
+
+        $requests = [];
+        for ($i = 0; $i <= EncryptedConnection::MAX_BATCH_MESSAGES; $i++) {
+            $requests["k{$i}"] = ['method' => 'help.getConfig', 'params' => []];
+        }
+
+        try {
+            $client->callMany($requests);
+            $this->fail('expected RuntimeException above the container message limit');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString((string) EncryptedConnection::MAX_BATCH_MESSAGES, $e->getMessage());
+        }
+
+        $this->assertSame($conn, self::connOf($client), 'bounds failure must NOT evict the cached connection');
+
+        $client->close();
+    }
+
     public function testTransportFailureEvictsCachedConnection(): void
     {
         [$clientSock, $serverSock] = $this->socketPair();

@@ -509,6 +509,90 @@ class EncryptedConnectionTest extends TestCase
     }
 
     /**
+     * batchRequestBodies is the in-flight batch's state — the field's
+     * contract is "set only while a batch is being sent/received". After a
+     * batch rpc_error throws, no batch is in flight anymore: it must be null.
+     */
+    public function testBatchStateClearedAfterRpcError(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
+
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            [$pin + 4, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 4,
+                'result' => ['_' => 'rpc_error', 'error_code' => 400, 'error_message' => 'QUERY_TOO_LOUD'],
+            ])],
+        ]));
+
+        try {
+            $conn->callBatch(['boom' => TLEncoder::encodeObject('help.getConfig', [])]);
+            $this->fail('expected TelegramException on batch rpc_error');
+        } catch (TelegramException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $this->assertNull(self::batchBodiesOf($conn), 'no in-flight batch state may linger after a failed batch');
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * Same invariant on the pre-send container-bytes bounds failure: the
+     * throw happens before any I/O, so the connection must be left as it
+     * was found — batchRequestBodies null, no bytes on the wire.
+     */
+    public function testBatchStateClearedAfterContainerBytesBoundsFailure(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $conn = new EncryptedConnection($session, $clientSock);
+
+        // 80 bodies x ~412 bytes -> container ~34 KB > the 32 KB limit.
+        $big = TLEncoder::encodeObject('rpc_error', ['error_code' => 0, 'error_message' => str_repeat('x', 400)]);
+        $bodies = [];
+        for ($i = 0; $i < 80; $i++) {
+            $bodies["k{$i}"] = $big;
+        }
+
+        try {
+            $conn->callBatch($bodies);
+            $this->fail('expected RuntimeException above the container byte limit');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString((string) EncryptedConnection::MAX_BATCH_CONTAINER_BYTES, $e->getMessage());
+        }
+
+        $this->assertNull(self::batchBodiesOf($conn), 'no in-flight batch state may linger after a bounds failure');
+
+        // Nothing was sent: the server side has no buffered request.
+        $this->assertSame([], self::drainSocket($serverSock));
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    private static function batchBodiesOf(EncryptedConnection $conn): mixed
+    {
+        return (new \ReflectionProperty(EncryptedConnection::class, 'batchRequestBodies'))->getValue($conn);
+    }
+
+    /** @return list<string> whatever the peer has buffered, chunked readable */
+    private static function drainSocket($socket): array
+    {
+        stream_set_blocking($socket, false);
+        $chunks = [];
+        while (($chunk = fread($socket, 8192)) !== false && $chunk !== '') {
+            $chunks[] = $chunk;
+        }
+        stream_set_blocking($socket, true);
+        return $chunks;
+    }
+
+    /**
      * Base for pinned-message-id tests: within PacketCodec's "not too far in
      * the future" window (id>>32 < time()+300) yet far above any real clock
      * candidate, so nextMessageId() deterministically yields base+4, +8, ...

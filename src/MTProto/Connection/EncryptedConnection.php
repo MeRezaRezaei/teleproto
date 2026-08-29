@@ -244,6 +244,35 @@ class EncryptedConnection
     }
 
     /**
+     * Pure pre-flight bounds check for a batch: at most MAX_BATCH_MESSAGES
+     * messages and MAX_BATCH_CONTAINER_BYTES of container payload (the exact
+     * wire size: 8-byte container header + 16-byte per-message framing +
+     * body bytes). Consumes no message ids/seqnos and does no I/O, so
+     * callers can validate BEFORE touching a cached connection — bounds
+     * failures are caller errors, not dead connections.
+     *
+     * @param array<string, string> $bodies key => prebuilt request body bytes
+     */
+    public static function assertBatchWithinBounds(array $bodies): void
+    {
+        if (count($bodies) > self::MAX_BATCH_MESSAGES) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: batch of %d messages exceeds the container limit of %d',
+                count($bodies),
+                self::MAX_BATCH_MESSAGES
+            ));
+        }
+        $bytes = 8 + 16 * count($bodies) + array_sum(array_map('strlen', $bodies));
+        if ($bytes > self::MAX_BATCH_CONTAINER_BYTES) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: batch container of %d bytes exceeds the %d-byte limit',
+                $bytes,
+                self::MAX_BATCH_CONTAINER_BYTES
+            ));
+        }
+    }
+
+    /**
      * Sends N independent prebuilt request bodies inside ONE naked msg_container
      * (one encrypted packet, one round-trip) and demultiplexes the per-request
      * rpc_results by the container's inner msg_ids. Inner ids/seqnos come from
@@ -260,48 +289,47 @@ class EncryptedConnection
         if ($bodies === []) {
             return [];
         }
-        if (count($bodies) > self::MAX_BATCH_MESSAGES) {
-            throw new RuntimeException(sprintf(
-                'EncryptedConnection: batch of %d messages exceeds the container limit of %d',
-                count($bodies),
-                self::MAX_BATCH_MESSAGES
-            ));
-        }
+        self::assertBatchWithinBounds($bodies);
         if (!is_resource($this->socket)) {
             throw new RuntimeException('EncryptedConnection: not connected');
         }
 
         $maxAttempts = 2; // original + one bad_server_salt resend
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            $this->batchRequestBodies = $bodies;
-            $innerIds = [];
-            $container = $this->encodeBatchContainer($bodies, $innerIds);
+        $this->batchRequestBodies = $bodies;
+        try {
+            for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+                $innerIds = [];
+                $container = $this->encodeBatchContainer($bodies, $innerIds);
 
-            $packet = PacketCodec::encryptPacket(
-                payload: $container,
-                authKey: $this->session->authKey,
-                sessionId: $this->sessionId,
-                serverSalt: $this->serverSalt,
-                seqNo: $this->nextContainerSeqNo(), // container = non-content-related: EVEN seq_no, counter not consumed
-                serverTimeDelta: $this->session->serverTimeDelta,
-                messageId: $this->nextMessageId() // outer id allocated last: strictly greater than every inner id
-            );
-            FrameCodec::sendAbridgedMessage($this->socket, $packet);
-            $this->touchActivity();
+                $packet = PacketCodec::encryptPacket(
+                    payload: $container,
+                    authKey: $this->session->authKey,
+                    sessionId: $this->sessionId,
+                    serverSalt: $this->serverSalt,
+                    seqNo: $this->nextContainerSeqNo(), // container = non-content-related: EVEN seq_no, counter not consumed
+                    serverTimeDelta: $this->session->serverTimeDelta,
+                    messageId: $this->nextMessageId() // outer id allocated last: strictly greater than every inner id
+                );
+                FrameCodec::sendAbridgedMessage($this->socket, $packet);
+                $this->touchActivity();
 
-            $results = $this->receiveBatchResults($innerIds);
-            if ($results === null) {
-                continue; // bad_server_salt: salt refreshed, whole batch resent with fresh ids
+                $results = $this->receiveBatchResults($innerIds);
+                if ($results === null) {
+                    continue; // bad_server_salt: salt refreshed, whole batch resent with fresh ids
+                }
+
+                $ordered = [];
+                foreach (array_keys($bodies) as $key) {
+                    $ordered[$key] = $results[$key];
+                }
+                return $ordered;
             }
-
+            throw new RuntimeException('EncryptedConnection: exhausted retries after bad_server_salt');
+        } finally {
+            // No batch is in flight anymore, success or failure — the field's
+            // contract is "bodies of the in-flight callBatch" only.
             $this->batchRequestBodies = null;
-            $ordered = [];
-            foreach (array_keys($bodies) as $key) {
-                $ordered[$key] = $results[$key];
-            }
-            return $ordered;
         }
-        throw new RuntimeException('EncryptedConnection: exhausted retries after bad_server_salt');
     }
 
     /**
