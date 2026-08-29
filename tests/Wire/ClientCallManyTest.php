@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MeRezaRezaei\Teleproto\Tests\Wire;
 
+use MeRezaRezaei\Teleproto\Exceptions\TelegramException;
 use MeRezaRezaei\Teleproto\MTProto\Client;
 use MeRezaRezaei\Teleproto\MTProto\Connection\EncryptedConnection;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\PacketCodec;
@@ -99,9 +100,10 @@ class ClientCallManyTest extends TestCase
         self::setConn($client, $conn);
         $pin = $this->pinnedMessageIdBase();
 
-        // 1st RTT: single call() answer for the first request (rpc_result; call() does not check req_msg_id)
+        // 1st RTT: single call() answer for the first request — rpc_result
+        // demuxed by req_msg_id, so it must echo the id call() sent (pin+4)
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $pin + 4,
             'result' => self::nearestDcPayload(),
         ]));
         // 2nd RTT: container answer for the batched remainder (inner id pin+8 — call() used pin+4)
@@ -194,24 +196,26 @@ class ClientCallManyTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
         (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
         self::setConn($client, $conn);
+        $pin = $this->pinnedMessageIdBase();
 
         try {
             // 'ping' without ping_id: known method, malformed params — the
             // encode loop must fail BEFORE any connection I/O.
             $client->callMany(['bad' => ['method' => 'ping', 'params' => []]]);
-            $this->fail('expected RuntimeException for the missing field');
+            $this->fail('expected exception was not thrown');
         } catch (\RuntimeException $e) {
             $this->assertStringContainsString("missing field 'ping_id'", $e->getMessage());
         }
 
         $this->assertSame($conn, self::connOf($client), 'encode failure must NOT evict the cached connection');
 
-        // Usability proof: the same connection answers a follow-up call.
+        // Usability proof: the same connection answers a follow-up call
+        // (no ids were consumed by the pre-I/O failure — this is pin+4).
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $pin + 4,
             'result' => self::nearestDcPayload(),
         ]));
         $this->assertSame(self::nearestDcPayload(), $client->call('help.getNearestDc'));
@@ -299,6 +303,160 @@ class ClientCallManyTest extends TestCase
         $client->close();
     }
 
+    /**
+     * CRITICAL regression — reviewer finding: a mid-batch rpc_error throw
+     * leaves the sibling results unread on a STILL-CACHED connection; a
+     * follow-up call() on that connection must never serve a leftover batch
+     * sibling's rpc_result as its own answer. call() demuxes strictly by
+     * req_msg_id: the stray (A's leftover, req pin+4) is skipped and the
+     * call's OWN result (req pin+16 — the batch consumed pin+4/+8/+12) is
+     * returned. Server order: error for B first, then A's result, then the
+     * follow-up answer.
+     */
+    public function testFollowUpCallAfterBatchErrorGetsOwnAnswerNotStraySibling(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock, apiId: 1)));
+        (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
+        self::setConn($client, $conn);
+        $pin = $this->pinnedMessageIdBase();
+
+        $foreign = ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2]; // A's leftover
+        $own = ['_' => 'nearestDc', 'country' => 'FR', 'this_dc' => 2, 'nearest_dc' => 2];      // the new call's answer
+
+        // 1) batch of 2: error for B (inner pin+8) arrives FIRST -> throws
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => $pin + 8,
+            'result' => ['_' => 'rpc_error', 'error_code' => 400, 'error_message' => 'QUERY_TOO_LOUD'],
+        ]));
+        // 2) A's result (inner pin+4) — unread sibling left in the buffer
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => $pin + 4, 'result' => $foreign,
+        ]));
+        // 3) the follow-up call()'s own answer (msg id pin+16)
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => $pin + 16, 'result' => $own,
+        ]));
+
+        try {
+            $client->callMany([
+                'a' => ['method' => 'help.getNearestDc', 'params' => []],
+                'b' => ['method' => 'help.getConfig', 'params' => []],
+            ]);
+            $this->fail('expected TelegramException on the batch rpc_error');
+        } catch (TelegramException $e) {
+            $this->assertStringContainsString('QUERY_TOO_LOUD', $e->getMessage());
+            $this->assertStringContainsString('help.getConfig', $e->getMessage(), "must carry the FAILING key's method");
+        }
+        $this->assertSame($conn, self::connOf($client), 'rpc_error keeps the cached connection');
+
+        // The regression assertion: the follow-up call gets ITS OWN result,
+        // never the leftover batch sibling's (which would be country DE).
+        $got = $client->call('help.getNearestDc');
+        $this->assertSame('FR', $got['country'], 'own answer served, stray sibling skipped');
+        $this->assertSame($own, $got);
+        $this->assertSame($conn, self::connOf($client));
+
+        $client->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * Stray poisoning is bounded: call() may skip at most MAX_STRAY_RESULTS
+     * foreign rpc_results while hunting for its own; the next stray throws
+     * instead of looping forever on a hostile/confused stream.
+     */
+    public function testCallThrowsAfterTooManyStrayResults(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
+        $pin = $this->pinnedMessageIdBase();
+
+        for ($i = 0; $i < 9; $i++) {
+            $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 40 + 4 * $i, // never our pin+4
+                'result' => ['_' => 'boolTrue'],
+            ]));
+        }
+
+        // expectException(): a missing throw must fail the test outright —
+        // never a fail() inside a RuntimeException catch (PHPUnit's own
+        // AssertionFailedError extends RuntimeException and could false-pass).
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('stray');
+        $conn->call('help.getNearestDc');
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * callBatch demux is STRICT: an rpc_result whose req_msg_id is not one
+     * of the in-flight container's inner ids is a protocol violation, not a
+     * silently droppable body — RuntimeException naming both ids.
+     */
+    public function testBatchRejectsUnknownResultReqMsgId(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
+
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
+            'req_msg_id' => $pin + 4000, // not the batch's inner id (pin+4)
+            'result' => ['_' => 'boolTrue'],
+        ]));
+
+        // not the expectException() style on purpose: two different message
+        // fragments must be asserted; neutral fail() text so an unthrown
+        // exception can never string-match its way to a false pass.
+        try {
+            $conn->callBatch(['only' => TLEncoder::encodeObject('help.getNearestDc', [])]);
+            $this->fail('expected exception was not thrown');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('req_msg_id', $e->getMessage());
+            $this->assertStringContainsString((string) ($pin + 4000), $e->getMessage(), 'names the received id');
+            $this->assertStringContainsString((string) ($pin + 4), $e->getMessage(), 'names the awaited id');
+        }
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * Strays packed into a received msg_container are skipped the same way:
+     * the container holds [foreign sibling, our answer] — call() must return
+     * OUR answer, not the first body it sees.
+     */
+    public function testCallSkipsStraySiblingInsideResultContainer(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
+        $pin = $this->pinnedMessageIdBase();
+
+        $foreign = ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2];
+        $own = ['_' => 'nearestDc', 'country' => 'FR', 'this_dc' => 2, 'nearest_dc' => 2];
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            [$pin + 44, TLEncoder::encodeObject('rpc_result', ['req_msg_id' => $pin + 44, 'result' => $foreign])],
+            [$pin + 46, TLEncoder::encodeObject('rpc_result', ['req_msg_id' => $pin + 4, 'result' => $own])],
+        ]));
+
+        $this->assertSame($own, $conn->call('help.getNearestDc'));
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
     // ---------------------------------------------------------------------------
     // socketpair fake-DC harness (mirrors EncryptedConnectionTest / ClientLiveModeTest)
     // ---------------------------------------------------------------------------
@@ -341,6 +499,8 @@ class ClientCallManyTest extends TestCase
     {
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         $this->assertNotFalse($pair);
+        stream_set_timeout($pair[0], 5);
+        stream_set_timeout($pair[1], 5);
         return $pair;
     }
 

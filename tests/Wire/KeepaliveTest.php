@@ -35,6 +35,26 @@ class KeepaliveTest extends TestCase
     }
 
     /**
+     * Base for pinned-message-id tests: within PacketCodec's "not too far in
+     * the future" window (id>>32 < time()+300) yet far above any real clock
+     * candidate, so nextMessageId() deterministically yields base+4, +8, ...
+     */
+    private function pinnedMessageIdBase(): int
+    {
+        return ((time() + 290) << 32) & ~3;
+    }
+
+    /**
+     * Pins lastMessageId on top of pinnedConn so the req_msg_id values the
+     * canned rpc_results echo are deterministic (call() demuxes by req_msg_id).
+     */
+    private function idPinnedConn(EncryptedConnection $conn): EncryptedConnection
+    {
+        (new \ReflectionProperty(EncryptedConnection::class, 'lastMessageId'))->setValue($conn, $this->pinnedMessageIdBase());
+        return $conn;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private static function nearestDc(): array
@@ -47,7 +67,7 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new SeededPingIdConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new SeededPingIdConnection($session, $clientSock)));
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc())); // init the conn first
         $this->assertSame(self::nearestDc(), $conn->call('help.getNearestDc'));
@@ -87,7 +107,7 @@ class KeepaliveTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session, live: true));
-        $conn = $this->pinnedConn(new SeededPingIdConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new SeededPingIdConnection($session, $clientSock)));
         self::setConn($client, $conn);
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
@@ -101,7 +121,9 @@ class KeepaliveTest extends TestCase
 
         SeededPingIdConnection::$pingId = 5; // lazy keepalive ping must receive an echoing pong
         $this->seed($serverSock, $authKey, TLEncoder::encodeObject('pong', ['msg_id' => 7, 'ping_id' => 5]));
-        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
+        // ids: init pin+4, keepalive ping pin+8 (answered by the bare pong),
+        // so the getConfig call itself is pin+12
+        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc(), $this->pinnedMessageIdBase() + 12));
 
         $this->assertSame(self::nearestDc(), $client->call('help.getConfig'));
 
@@ -123,14 +145,14 @@ class KeepaliveTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session, live: true));
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
         self::setConn($client, $conn);
 
         $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
         $client->call('help.getNearestDc');
         $this->decryptRequest($serverSock, $authKey); // drain the invokeWithLayer-wrapped init request
 
-        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
+        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc(), $this->pinnedMessageIdBase() + 8));
         $this->assertSame(self::nearestDc(), $client->call('help.getConfig'));
 
         // exactly one request for the second call, and it is the bare RPC (no ping)
@@ -169,10 +191,15 @@ class KeepaliveTest extends TestCase
             protected function connectEncrypted(SessionData $session, string $host, int $port, $promotedSocket = null): EncryptedConnection
             {
                 $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+                stream_set_timeout($pair[0], 5);
+                stream_set_timeout($pair[1], 5);
                 ($this->onDial)($pair[1]);
                 $conn = new EncryptedConnection($session, $pair[0], $this->apiId);
                 // canned frames are seeded with the fixed session id; pin the echo
                 (new \ReflectionProperty(EncryptedConnection::class, 'sessionId'))->setValue($conn, 0x5E5510A1);
+                // deterministic msg ids: canned results echo pin+4 (each fresh
+                // connection's first successful call)
+                (new \ReflectionProperty(EncryptedConnection::class, 'lastMessageId'))->setValue($conn, ((time() + 290) << 32) & ~3);
                 return $conn;
             }
         };
@@ -204,7 +231,7 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
         $this->assertSame(0, $conn->getServerSalt());
 
         $newSalt = 0x7AFEBABEDEADBEE;
@@ -214,7 +241,8 @@ class KeepaliveTest extends TestCase
             'error_code' => 48,
             'new_server_salt' => $newSalt,
         ]));
-        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc()));
+        // bad_server_salt resend gets a fresh msg id (pin+8) — echo it
+        $this->seed($serverSock, $authKey, $this->cannedResult(self::nearestDc(), $this->pinnedMessageIdBase() + 8));
 
         $this->assertSame(self::nearestDc(), $conn->call('help.getNearestDc'));
 
@@ -223,7 +251,7 @@ class KeepaliveTest extends TestCase
 
         // a connection built on the same session starts from the persisted salt
         [$clientSock2, $serverSock2] = $this->socketPair();
-        $conn2 = $this->pinnedConn(new EncryptedConnection($session, $clientSock2));
+        $conn2 = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock2)));
         $this->assertSame($newSalt, $conn2->getServerSalt());
         $this->seed($serverSock2, $authKey, $this->cannedResult(self::nearestDc()));
         $this->assertSame(self::nearestDc(), $conn2->call('help.getNearestDc'));
@@ -241,7 +269,7 @@ class KeepaliveTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         $pushSalt = 0x7234567890ABCD;
         $this->seed($serverSock, $authKey,
@@ -323,10 +351,10 @@ class KeepaliveTest extends TestCase
     /**
      * @param array<string, mixed> $result
      */
-    private function cannedResult(array $result): string
+    private function cannedResult(array $result, ?int $reqMsgId = null): string
     {
         return TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $reqMsgId ?? $this->pinnedMessageIdBase() + 4, // first id an id-pinned conn sends
             'result' => $result,
         ]);
     }

@@ -22,8 +22,11 @@ use RuntimeException;
  * First call is wrapped in invokeWithLayer(layer, initConnection(..., query)); later calls
  * send the bare constructor. Handles bad_server_salt (resend once with the fresh salt),
  * gzip_packed results, rpc_error -> TelegramException, and skips transient push messages.
- * callBatch() packs N independent prebuilt bodies into one naked msg_container
- * (single round-trip) and demultiplexes the per-request rpc_results by inner msg_id.
+ * call() demultiplexes strictly by req_msg_id: rpc_results answering OTHER requests
+ * (e.g. batch siblings left unread after a mid-batch rpc_error throw) are skipped as
+ * strays, never served as this call's answer. callBatch() packs N independent prebuilt
+ * bodies into one naked msg_container (single round-trip) and demultiplexes the
+ * per-request rpc_results by inner msg_id.
  */
 class EncryptedConnection
 {
@@ -37,6 +40,15 @@ class EncryptedConnection
      * = NewSession -> 0x9ec20908) instead of being duplicated here.
      */
     private const MAX_TRANSIENT_MESSAGES = 3;
+
+    /**
+     * Poison cap for stray rpc_results in call(): foreign results (req_msg_id
+     * not ours) are skipped — at most this many, then the stream is declared
+     * broken (poison-cap style, mirroring the batch frame cap). One in-flight
+     * request can legitimately be preceded only by leftovers of earlier
+     * batches/calls, which are few; 8 is far beyond any honest sibling count.
+     */
+    protected const MAX_STRAY_RESULTS = 8;
 
     /**
      * Docs limits for one msg_container (core.telegram.org/mtproto/service_messages):
@@ -190,6 +202,7 @@ class EncryptedConnection
         $maxAttempts = 2; // original + one bad_server_salt resend
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $this->inited = true;
+            $msgId = $this->nextMessageId(); // get-then-use: the id below must be the one demuxed against
             $packet = PacketCodec::encryptPacket(
                 payload: $body,
                 authKey: $this->session->authKey,
@@ -197,12 +210,12 @@ class EncryptedConnection
                 serverSalt: $this->serverSalt,
                 seqNo: $this->nextContentSeqNo(), // content messages require an odd, increasing seq_no
                 serverTimeDelta: $this->session->serverTimeDelta,
-                messageId: $this->nextMessageId()
+                messageId: $msgId
             );
             FrameCodec::sendAbridgedMessage($this->socket, $packet);
             $this->touchActivity();
 
-            $result = $this->receiveDecodedResponse();
+            $result = $this->receiveDecodedResponse($msgId);
 
             if (($result['_'] ?? '') === 'bad_server_salt') {
                 $this->refreshServerSalt((int)$result['new_server_salt']);
@@ -472,7 +485,14 @@ class EncryptedConnection
 
         $reqId = (int)$body['req_msg_id'];
         if (!isset($pending[$reqId])) {
-            return null; // result of an earlier single call, not this batch
+            // Strict demux: a result answering an id that is not one of this
+            // container's in-flight requests is a protocol violation — loud,
+            // never silently dropped (silent drops desynchronize callers).
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: rpc_result for unknown req_msg_id %d while awaiting {%s}',
+                $reqId,
+                implode(', ', array_keys($pending))
+            ));
         }
 
         $key = $pending[$reqId];
@@ -517,15 +537,24 @@ class EncryptedConnection
     }
 
     /**
-     * Reads encrypted frames until a non-transient message arrives; skips at most
-     * MAX_TRANSIENT_MESSAGES consecutive msgs_ack / new_session_created pushes.
+     * Reads encrypted frames until the reply for THIS request arrives.
+     * rpc_results are demultiplexed strictly by req_msg_id: a result
+     * answering another request (a batch sibling left unread after a
+     * mid-batch rpc_error throw, a late duplicate, ...) is a stray —
+     * skipped, never returned. Strays and transient pushes (msgs_ack /
+     * new_session_created) are each poison-capped: at most
+     * MAX_TRANSIENT_MESSAGES and MAX_STRAY_RESULTS respectively, then the
+     * stream is declared broken.
      *
+     * @param int $expectedMsgId the msg_id call() sent this request with
      * @return array<string, mixed>
      */
-    protected function receiveDecodedResponse(): array
+    protected function receiveDecodedResponse(int $expectedMsgId): array
     {
         $transientIds = self::transientConstructorIds();
-        for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
+        $transients = 0;
+        $strays = 0;
+        while (true) {
             $frame = FrameCodec::receiveAbridgedMessage($this->socket);
             $this->touchActivity();
             $this->assertNotTransportErrorFrame($frame);
@@ -535,6 +564,9 @@ class EncryptedConnection
 
             $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
             if (in_array($id, $transientIds, true)) {
+                if ($transients++ >= self::MAX_TRANSIENT_MESSAGES) {
+                    throw new RuntimeException('EncryptedConnection: too many consecutive transient messages');
+                }
                 if ($id === TLRegistry::id('new_session_created')) {
                     $offset = 0;
                     $push = TLDecoder::decodeObject($payload, $offset);
@@ -543,34 +575,59 @@ class EncryptedConnection
                 continue; // transient push, keep reading
             }
 
-            $offset = 0;
-            $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
-
             // msg_container uses naked encoding (id + count + {msg_id, seqno, bytes, body} tuples,
             // no vector header, no per-message constructor) — must be hand-parsed.
             if ($id === 0x73f1f8dc) {
-                $actionable = self::parseNakedContainer($payload, $this->serverSalt);
+                $actionable = self::parseNakedContainer($payload, $this->serverSalt, $expectedMsgId, $strays);
                 $this->refreshServerSalt($actionable['salt']);
                 if ($actionable['message'] === null) {
-                    continue; // container held only transients; keep reading
+                    continue; // container held only transients/strays; keep reading
                 }
                 return $actionable['message'];
             }
 
+            $offset = 0;
             $decoded = TLDecoder::decodeObject($payload, $offset);
+            if (($decoded['_'] ?? '') === 'rpc_result') {
+                $reqId = (int)$decoded['req_msg_id'];
+                if ($reqId !== $expectedMsgId) {
+                    self::tallyStrayResult($strays, $reqId, $expectedMsgId);
+                    continue; // stray batch sibling / foreign result: skip, keep reading
+                }
+            }
             return $decoded;
         }
-        throw new RuntimeException('EncryptedConnection: too many consecutive transient messages');
+    }
+
+    /**
+     * Counts one skipped stray rpc_result against the MAX_STRAY_RESULTS
+     * poison cap, throwing past it.
+     */
+    protected static function tallyStrayResult(int &$strays, int $reqId, int $expectedMsgId): void
+    {
+        $strays++;
+        if ($strays > self::MAX_STRAY_RESULTS) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: more than %d stray rpc_result(s), last req_msg_id %d, while awaiting req_msg_id %d',
+                self::MAX_STRAY_RESULTS,
+                $reqId,
+                $expectedMsgId
+            ));
+        }
     }
 
     /**
      * Parses a naked-encoded msg_container payload. Returns the first
-     * actionable decoded body (or null when every element was transient)
-     * plus the possibly-refreshed server salt from new_session_created.
+     * actionable decoded body — one whose rpc_result req_msg_id matches the
+     * awaited request, or any non-rpc_result non-transient body — or null
+     * when every element was transient/stray, plus the possibly-refreshed
+     * server salt from new_session_created. Stray rpc_result bodies count
+     * against the caller's stray cap via $strays.
      *
+     * @param int $strays running stray counter (mutated)
      * @return array{message: array<string, mixed>|null, salt: int}
      */
-    protected static function parseNakedContainer(string $payload, int $currentSalt): array
+    protected static function parseNakedContainer(string $payload, int $currentSalt, int $expectedMsgId, int &$strays): array
     {
         $transientIds = self::transientConstructorIds();
         $salt = $currentSalt;
@@ -596,6 +653,10 @@ class EncryptedConnection
             }
             if (in_array(TLRegistry::id($name), $transientIds, true)) {
                 continue;
+            }
+            if ($name === 'rpc_result' && (int)$body['req_msg_id'] !== $expectedMsgId) {
+                self::tallyStrayResult($strays, (int)$body['req_msg_id'], $expectedMsgId);
+                continue; // stray sibling packed into the container: drop, keep scanning
             }
             return ['message' => $body, 'salt' => $salt];
         }

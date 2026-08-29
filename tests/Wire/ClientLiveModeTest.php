@@ -49,9 +49,10 @@ class ClientLiveModeTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = new Client(apiId: 1, apiHash: 'h', session: $session, live: true);
-        self::setConn($client, self::pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $conn = $this->idPinnedConn(self::pinnedConn(new EncryptedConnection($session, $clientSock)));
+        self::setConn($client, $conn);
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $this->pinnedMessageIdBase() + 4, // echoes the id call() sent
             'result' => ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2],
         ]));
 
@@ -131,22 +132,23 @@ class ClientLiveModeTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
-        $conn = self::pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = self::idPinnedConn(self::pinnedConn(new EncryptedConnection($session, $clientSock)));
         (new \ReflectionProperty(EncryptedConnection::class, 'inited'))->setValue($conn, true);
         self::setConn($client, $conn);
 
         try {
             $client->call('ping'); // ping_id missing: encode-time failure, no bytes on the wire
-            $this->fail('expected RuntimeException for the missing field');
+            $this->fail('expected exception was not thrown');
         } catch (\RuntimeException $e) {
             $this->assertStringContainsString("missing field 'ping_id'", $e->getMessage());
         }
 
         $this->assertSame($conn, self::connOf($client), 'encode failure must NOT evict the cached connection');
 
-        // Usability proof: the same connection answers a follow-up call.
+        // Usability proof: the same connection answers a follow-up call
+        // (the pre-I/O failure consumed no msg ids — this is pin+4).
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $this->pinnedMessageIdBase() + 4,
             'result' => ['_' => 'nearestDc', 'country' => 'DE', 'this_dc' => 2, 'nearest_dc' => 2],
         ]));
         $this->assertSame('nearestDc', $client->call('help.getNearestDc')['_']);
@@ -162,11 +164,13 @@ class ClientLiveModeTest extends TestCase
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
         $client = (new Client(apiId: 1, apiHash: 'h', session: $session))->live();
-        self::setConn($client, self::pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $conn = self::idPinnedConn(self::pinnedConn(new EncryptedConnection($session, $clientSock)));
+        self::setConn($client, $conn);
 
-        // rpc_error-encrypted canned response (same helper pattern as EncryptedConnectionTest)
+        // rpc_error must still ANSWER the sent request (req_msg_id demux);
+        // a foreign id would be skipped as a stray
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $this->pinnedMessageIdBase() + 4,
             'result' => ['_' => 'rpc_error', 'error_code' => 420, 'error_message' => 'SLOWMODE_WAIT_10'],
         ]));
 
@@ -190,7 +194,32 @@ class ClientLiveModeTest extends TestCase
     {
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         $this->assertNotFalse($pair);
+        stream_set_timeout($pair[0], 5);
+        stream_set_timeout($pair[1], 5);
         return $pair;
+    }
+
+    /**
+     * Base for pinned-message-id tests: within PacketCodec's "not too far in
+     * the future" window (id>>32 < time()+300) yet far above any real clock
+     * candidate, so nextMessageId() deterministically yields base+4, +8, ...
+     */
+    private function pinnedMessageIdBase(): int
+    {
+        return ((time() + 290) << 32) & ~3;
+    }
+
+    /**
+     * Pins lastMessageId so the ids call() sends are deterministic and the
+     * pre-seeded rpc_result req_msg_id values can echo them.
+     */
+    private static function idPinnedConn(EncryptedConnection $conn): EncryptedConnection
+    {
+        (new \ReflectionProperty(EncryptedConnection::class, 'lastMessageId'))->setValue(
+            $conn,
+            ((time() + 290) << 32) & ~3
+        );
+        return $conn;
     }
 
     /**

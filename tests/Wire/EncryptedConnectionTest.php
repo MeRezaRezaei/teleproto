@@ -93,10 +93,11 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock, apiId: 12345));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock, apiId: 12345)));
+        $pin = $this->pinnedMessageIdBase();
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 0x1122334455667788,
+            'req_msg_id' => $pin + 4, // echoes the id call() sent (demuxed strictly)
             'result' => self::nearestDcPayload(),
         ]));
 
@@ -124,7 +125,8 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
 
         $newSalt = 0xCAFEBABE;
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('bad_server_salt', [
@@ -133,7 +135,8 @@ class EncryptedConnectionTest extends TestCase
             'error_code' => 48,
             'new_server_salt' => $newSalt,
         ]));
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
+        // resend attempt gets a fresh msg id (pin+8) — the answer must echo it
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult($pin + 8));
 
         $this->assertSame(self::nearestDcPayload(), $conn->call('help.getNearestDc'));
 
@@ -154,10 +157,10 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $this->pinnedMessageIdBase() + 4,
             'result' => ['_' => 'rpc_error', 'error_code' => 420, 'error_message' => 'SLOWMODE_WAIT_10'],
         ]));
 
@@ -178,10 +181,10 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $this->pinnedMessageIdBase() + 4,
             'result' => ['_' => 'gzip_packed', 'packed_data' => gzencode(
                 TLEncoder::encodeObject('nearestDc', self::nearestDcPayload()), 9
             )],
@@ -198,7 +201,7 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
 
         // new_session_created first_msg_id:long unique_id:long server_salt:long
         $this->seedFakeServerResponse($serverSock, $authKey,
@@ -206,7 +209,7 @@ class EncryptedConnectionTest extends TestCase
         // msgs_ack msg_ids:Vector<long>
         $this->seedFakeServerResponse($serverSock, $authKey,
             pack('V', TLRegistry::id('msgs_ack')) . TLSerializer::packVector([111, 222], TLSerializer::packLong(...)));
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult($this->pinnedMessageIdBase() + 4));
 
         $this->assertSame(self::nearestDcPayload(), $conn->call('help.getNearestDc'));
 
@@ -252,10 +255,11 @@ class EncryptedConnectionTest extends TestCase
         [$clientSock, $serverSock] = $this->socketPair();
         $authKey = random_bytes(256);
         $session = new SessionData(dcId: 2, authKey: $authKey);
-        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
 
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
-        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult());
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult($pin + 4));
+        $this->seedFakeServerResponse($serverSock, $authKey, $this->cannedNearestDcResult($pin + 8));
 
         $conn->call('help.getNearestDc'); // first: invokeWithLayer-wrapped
         $conn->call('help.getConfig');    // second: bare constructor
@@ -667,6 +671,8 @@ class EncryptedConnectionTest extends TestCase
     {
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         $this->assertNotFalse($pair);
+        stream_set_timeout($pair[0], 5);
+        stream_set_timeout($pair[1], 5);
         return $pair;
     }
 
@@ -708,10 +714,10 @@ class EncryptedConnectionTest extends TestCase
         );
     }
 
-    private function cannedNearestDcResult(): string
+    private function cannedNearestDcResult(int $reqMsgId): string
     {
         return TLEncoder::encodeObject('rpc_result', [
-            'req_msg_id' => 7,
+            'req_msg_id' => $reqMsgId,
             'result' => self::nearestDcPayload(),
         ]);
     }
