@@ -101,25 +101,52 @@ The honest takeaway: Teleproto has no daemon precisely because cold start is che
 
 ---
 
-## 🗺️ v1.1 Roadmap (Ranked)
+## 🚀 Batching (shipped): N Requests in One Round-Trip
 
-Audited against the current `EncryptedConnection`; highest value first:
+Sequential `call()` blocks per query (encrypt → send → read), so N independent requests cost N RTTs. `callMany()` collapses them into **one round-trip**: all N bodies ride inside a single `msg_container` (one encrypted packet, one TCP write), and the per-request `rpc_result`s are demultiplexed by inner msg_id.
 
-### 1. Send-side `msg_container` batching (N requests → 1 RTT)
-Today `call()` blocks per query: encrypt → send → read. Batching wraps N outgoing queries in one `msg_container` on one TCP write, so N round trips collapse into one. This is the biggest single win because it attacks RTT, which dominates Telegram latency for PHP workers.
+```php
+// Engine level (MTProto Client):
+$results = $client->callMany([
+    'nearest' => ['method' => 'help.getNearestDc', 'params' => []],
+    'me'      => ['method' => 'users.getUsers', 'params' => ['id' => [['_' => 'inputUserSelf']]]],
+    'state'   => ['method' => 'updates.getState', 'params' => []],
+]);
 
-What it requires:
-- a **pending map**: `msg_id → deferred result` so replies can be matched to callers,
-- proper **ack tracking** (`msgs_ack`) instead of today's "skip transient pushes" behavior in `receiveDecodedResponse()`.
+$results['me'][0]['id'];   // key => decoded result, input key order preserved
+$results['state']['pts'];  // each result is the same decoded array call() returns
 
-### 2. Receive-side demultiplexing
-The receive path already parses incoming `msg_container`s (`parseNakedContainer()`), but returns only the **first actionable message** and discards the rest. Full demux delivers every element to the pending map — a prerequisite for >1 in-flight request per connection.
+// Or via the service passthrough on the default user scope:
+TP::callMany([...]);       // MeRezaRezaei\Teleproto\Services\TeleprotoClient::callMany
+```
 
-### 3. Per-DC connection pools
-A pool of `EncryptedConnection`s per data center (chosen by session DC info), round-robining batched sends. This multiplies throughput per account once items 1–2 land.
+**Live-measured** (production DC4, warm connection, 2026-08-29, `php examples/batch-bench.php`):
 
-### 4. Full Fiber/event-loop: deliberately NOT planned
-A single-threaded event loop (Amphp ReactPHP, MadelineProto-style) would complicate every code path for one account — and MadelineProto's own handshake is sequential anyway. With container batching plus process fan-out, the marginal win from async I/O is small. PHP processes are cheap; RTTs are not. Batching first, Fibers never (unless a contributor proves otherwise with benchmarks).
+| Mode | 3 requests |
+| :--- | :--- |
+| Sequential `call()` × 3 | **58–81 ms** (~20 ms RTT each) |
+| One `callMany()` (3-in-1 container) | **21–33 ms** |
+| Speedup | **2.3–2.7×** (≈ 1 RTT + processing) |
+
+Semantics worth knowing:
+
+- **Bounds**: max 1020 messages / 32 KB per container (docs limits) — enforced with clear exceptions.
+- **Validation first**: every method name is validated against the TL registry before any bytes hit the wire.
+- **Fresh connection**: the first request still establishes the layer via the `invokeWithLayer` + `initConnection` wrap (one init RTT), the rest ride one container; on a warm connection all N go in a single container.
+- **Errors**: a batch `rpc_error` resolves to the same typed exception as `call()`, carrying the failing request's method context; a stale salt triggers one whole-batch resend with fresh ids.
+- **Still blocking**: one in-flight batch per connection — the engine stays small and stateless; parallelism across batches is the connection-pool roadmap item below.
+
+---
+
+## 🗺️ Roadmap (Ranked)
+
+Audited against the current `EncryptedConnection`; send-side batching and receive demultiplexing have shipped (above). Highest value first:
+
+### 1. Per-DC connection pools
+A pool of `EncryptedConnection`s per data center (chosen by session DC info), round-robining batched sends. This multiplies per-account throughput once you need more than one batched round-trip in flight.
+
+### 2. Full Fiber/event-loop: deliberately NOT planned
+A single-threaded event loop (Amphp ReactPHP, MadelineProto-style) would complicate every code path for one account — and MadelineProto's own handshake is sequential anyway. With container batching plus process fan-out, the marginal win from async I/O is small. PHP processes are cheap; RTTs are not. Batching shipped; Fibers never (unless a contributor proves otherwise with benchmarks).
 
 ---
 
@@ -142,15 +169,15 @@ There is no internal buffer: a sink that blocks (heavy DB work, synchronous HTTP
 
 ## 📊 Load Limits, Honestly
 
-| Capability | v1.0 | v1.1 (planned) |
-| :--- | :--- | :--- |
-| In-flight queries per connection | **1** (blocking `call()`) | N (via `msg_container` batching) |
-| Round trips for N requests | N | ~1 |
-| Throughput ceiling per connection | ~1/RTT per query | RTT-amortized |
-| Concurrent accounts | One process each (Horizon/queue workers) | Same — process model does not change |
+| Capability | Before batching | Today (batching shipped) | Next (pools, planned) |
+| :--- | :--- | :--- | :--- |
+| In-flight queries per connection | 1 (blocking `call()`) | N in one `callMany()` batch | Multiple batches |
+| Round trips for N requests | N | ~1 | ~1 per pool lane |
+| Throughput ceiling per connection | ~1/RTT per query | RTT-amortized per batch | Multiplied by pool size |
+| Concurrent accounts | One process each (Horizon/queue workers) | Same — process model does not change | Same |
 
-Rules of thumb for v1.0:
+Rules of thumb:
 
 - **One process per account/bot.** Multiple processes may share one auth key (distinct `session_id`s); do not share one `EncryptedConnection` across processes — it is a socket, not a broker.
-- **Fan out processes when** you are latency-bound on a single account (sequential dependent calls) or volume-bound across accounts (add workers). Fan-out is the v1.0 answer to both.
-- **Do not** try to raise per-account throughput by opening many connections to the same DC from one script — that is the pool feature (roadmap item 3), and doing it ad-hoc today just multiplies handshakes without batching.
+- **Batch independent calls** with `callMany()` when you control the request set (fan-out reads, profile + state warmups); keep sequential `call()` for dependent chains.
+- **Fan out processes when** you are latency-bound beyond what batching removes, or volume-bound across accounts (add workers). Fan-out remains the multi-account answer.

@@ -33,6 +33,29 @@ class TeleprotoClientTest extends TestCase
         $this->assertEquals('default_hash_123', $userScope->mtproto->apiHash);
     }
 
+    /**
+     * callMany passthrough: delegates to the default user scope's mtproto
+     * client — offline stub shape per key, keys and order preserved.
+     */
+    public function testCallManyPassthroughOnDefaultUserScope(): void
+    {
+        $client = new TeleprotoClient(
+            defaultApiId: 12345,
+            defaultApiHash: 'default_hash_123',
+            defaultUserSession: random_bytes(256)
+        );
+
+        $got = $client->callMany([
+            'nearest' => ['method' => 'help.getNearestDc', 'params' => []],
+            'status' => ['method' => 'account.updateStatus', 'params' => ['offline' => false]],
+        ]);
+
+        $this->assertSame(['nearest', 'status'], array_keys($got));
+        $this->assertEquals('rpc_result', $got['nearest']['_']);
+        $this->assertEquals('help.getNearestDc', $got['nearest']['method']);
+        $this->assertEquals(['offline' => false], $got['status']['params']);
+    }
+
     public function testInputPeerHelpers(): void
     {
         $userPeer = InputPeer::user(123456, 'access_hash_abc');

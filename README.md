@@ -175,7 +175,7 @@ Then log in once: `php artisan teleproto:login`. That is the only setup for MTPr
 
 ## Tradeoffs — and why they are deliberate
 
-- **One in-flight query per connection.** No Fibers, no event loop. A blocking `call()` (encrypt → send → read) is what keeps the engine small and stateless. `msg_container` batching (N requests → 1 RTT) is the top-ranked v1.1 roadmap item.
+- **Blocking wire, batched where it counts.** No Fibers, no event loop: `call()` (encrypt → send → read) keeps the engine small and stateless, and `callMany()` ships N independent requests in ONE round-trip via `msg_container` batching — live-measured on production DC4 at 2.3–2.7× vs sequential ([docs/scaling.md](docs/scaling.md)).
 - **No update-handler framework.** Updates arrive as Laravel events (`TelegramUpdateReceived`) and through the one-method `UpdateSinkInterface` contract — your pipeline (Redis Stream, queue, Spatie models) plugs in at that seam. Building opinionated handlers on top is deliberately left to higher layers.
 - **Full schema registry, curated fluent builders.** Every schema method is callable *today* via `call('method.name', [...])`; generated fluent builders (`Methods::auth()->signIn()->…`) are added from a curated list validated against the schema artifacts.
 - **No proxy tunneling yet.** `setProxy()` accepts config, but connections are currently direct — tracked in the transport layer.
@@ -186,7 +186,7 @@ Details and the ranked roadmap: [docs/scaling.md](docs/scaling.md) · [Core desi
 
 ## Going faster
 
-The DH handshake happened once, ever — it is baked into the session string — so a cold start is just connect + salt (~49 ms measured), and a warm call is one socket round-trip (< 5 ms). Three patterns:
+The DH handshake happened once, ever — it is baked into the session string — so a cold start is just connect + salt (~49 ms measured), and a warm call is one socket round-trip (< 5 ms). For N independent calls, `callMany()` puts them all in one round-trip (N-in-1-RTT, live-measured 2.3–2.7× on production DC4). Three patterns:
 
 - **Plain FPM** — completely fine for occasional calls per request.
 - **One queue worker per account** — Horizon/queue fan-out is the supported multi-account model.

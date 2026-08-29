@@ -284,6 +284,298 @@ class EncryptedConnectionTest extends TestCase
         fclose($serverSock);
     }
 
+    // ---------------------------------------------------------------------------
+    // callBatch: naked msg_container encode + receive demux (W2 T1)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Two request bodies, one round-trip: ids are pinned (base+4/+8) so the
+     * canned container — ONE frame with both rpc_results keyed to those inner
+     * msg_ids — can be pre-seeded before the blocking call runs; afterwards
+     * parseClientNakedContainer proves the client really sent those ids.
+     */
+    public function testBatchOfTwoReturnsBothResultsKeyedCorrectly(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock, apiId: 12345)));
+        $pin = $this->pinnedMessageIdBase();
+
+        $canned = [
+            'nearest' => self::nearestDcPayload(),
+            'config' => ['_' => 'boolTrue'], // any registered response constructor
+        ];
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            [$pin + 4, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 4, 'result' => $canned['nearest'],
+            ])],
+            [$pin + 8, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 8, 'result' => $canned['config'],
+            ])],
+        ]));
+
+        $got = $conn->callBatch([
+            'nearest' => TLEncoder::encodeObject('help.getNearestDc', []),
+            'config' => TLEncoder::encodeObject('help.getConfig', []),
+        ]);
+        $this->assertSame(['nearest', 'config'], array_keys($got), 'input key order preserved');
+        $this->assertSame($canned['nearest'], $got['nearest']);
+        $this->assertSame($canned['config'], $got['config']);
+
+        // The sent container must be well-formed naked encoding with correct
+        // inner msg_id/seqno conventions.
+        $sent = $this->decryptFakeServerRequest($serverSock, $authKey);
+        $this->assertSame(0x73f1f8dc, unpack('V', substr($sent['payload'], 0, 4))[1]);
+        $inner = self::parseClientNakedContainer($sent['payload']);
+        $this->assertCount(2, $inner);
+        $this->assertSame('help.getNearestDc', $inner[0]['body']['_']);
+        $this->assertSame('help.getConfig', $inner[1]['body']['_']);
+        $this->assertSame($pin + 4, $inner[0]['msg_id']);
+        $this->assertSame($pin + 8, $inner[1]['msg_id']);
+        $this->assertSame(1, $inner[0]['seqno']);
+        $this->assertSame(3, $inner[1]['seqno']);
+        $this->assertSame(0, $inner[0]['msg_id'] % 4);
+        $this->assertSame(0, $inner[1]['msg_id'] % 4);
+        $this->assertGreaterThan($inner[0]['msg_id'], $inner[1]['msg_id']);
+        // outer envelope id strictly greater than every inner id
+        $this->assertGreaterThan($inner[1]['msg_id'], $sent['message_id']);
+        // container envelope = non-content-related message: EVEN seq_no above every
+        // inner seq, content counter not consumed (live DC4 enforces this: code 34)
+        $this->assertSame(4, $sent['seq_no']);
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    public function testSingleEntryBatchWorks(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
+
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            [$pin + 4, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 4, 'result' => self::nearestDcPayload(),
+            ])],
+        ]));
+
+        $got = $conn->callBatch(['only' => TLEncoder::encodeObject('help.getNearestDc', [])]);
+        $this->assertSame(['only' => self::nearestDcPayload()], $got);
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    public function testBatchRpcErrorResolvesWithThatKeysMethodContext(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+        $pin = $this->pinnedMessageIdBase();
+
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            // first body errors; second would succeed but must never surface
+            [$pin + 4, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 4,
+                'result' => ['_' => 'rpc_error', 'error_code' => 400, 'error_message' => 'QUERY_TOO_LOUD'],
+            ])],
+            [$pin + 8, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 8, 'result' => self::nearestDcPayload(),
+            ])],
+        ]));
+
+        try {
+            $conn->callBatch([
+                'boom' => TLEncoder::encodeObject('help.getConfig', []),
+                'ok' => TLEncoder::encodeObject('help.getNearestDc', []),
+            ]);
+            $this->fail('expected TelegramException on batch rpc_error');
+        } catch (TelegramException $e) {
+            // resolver exception carries the FAILING key's method (help.getConfig), not its neighbor's
+            $this->assertStringContainsString('QUERY_TOO_LOUD', $e->getMessage());
+            $this->assertStringContainsString('help.getConfig', $e->getMessage());
+            $this->assertSame(400, $e->getCode());
+        }
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    public function testBatchResendsWholeContainerOnceAfterBadServerSalt(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->idPinnedConn($this->pinnedConn(new EncryptedConnection($session, $clientSock)));
+
+        // Pinning makes the resend's fresh ids deterministic: attempt 1 uses
+        // pin+4/+8, the bad_server_salt resend pin+16/+20 — so the honest
+        // answer for the RESEND can be pre-seeded (FIFO after the salt error).
+        $pin = $this->pinnedMessageIdBase();
+        $newSalt = 0xCAFEBABE;
+        $this->seedFakeServerResponse($serverSock, $authKey, TLEncoder::encodeObject('bad_server_salt', [
+            'bad_msg_id' => 1,
+            'bad_msg_seqno' => 0,
+            'error_code' => 48,
+            'new_server_salt' => $newSalt,
+        ]));
+        $this->seedFakeServerResponse($serverSock, $authKey, self::nakedResultContainer([
+            [$pin + 16, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 16, 'result' => self::nearestDcPayload(),
+            ])],
+            [$pin + 20, TLEncoder::encodeObject('rpc_result', [
+                'req_msg_id' => $pin + 20, 'result' => ['_' => 'boolTrue'],
+            ])],
+        ]));
+
+        $got = $conn->callBatch([
+            'a' => TLEncoder::encodeObject('help.getNearestDc', []),
+            'b' => TLEncoder::encodeObject('help.getConfig', []),
+        ]);
+        $this->assertSame(self::nearestDcPayload(), $got['a']);
+        $this->assertSame(['_' => 'boolTrue'], $got['b']);
+        $this->assertSame($newSalt, $conn->getServerSalt());
+
+        $first = $this->decryptFakeServerRequest($serverSock, $authKey);
+        $second = $this->decryptFakeServerRequest($serverSock, $authKey);
+        // both attempts carry a well-formed container; the resend uses the fresh
+        // salt and fresh (strictly increasing) outer + inner ids
+        $this->assertSame(0x73f1f8dc, unpack('V', substr($first['payload'], 0, 4))[1]);
+        $this->assertSame(0x73f1f8dc, unpack('V', substr($second['payload'], 0, 4))[1]);
+        $this->assertSame(0, $first['server_salt']);
+        $this->assertSame($newSalt, $second['server_salt']);
+        $this->assertGreaterThan($first['message_id'], $second['message_id']);
+        $firstInner = self::parseClientNakedContainer($first['payload']);
+        $secondInner = self::parseClientNakedContainer($second['payload']);
+        $this->assertSame([$pin + 4, $pin + 8], [$firstInner[0]['msg_id'], $firstInner[1]['msg_id']]);
+        $this->assertSame([$pin + 16, $pin + 20], [$secondInner[0]['msg_id'], $secondInner[1]['msg_id']]);
+        $this->assertGreaterThan($firstInner[1]['msg_id'], $secondInner[0]['msg_id'], 'fresh inner ids on resend');
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    public function testBatchOverMessageLimitThrowsBeforeSending(): void
+    {
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $conn = new EncryptedConnection($session); // deliberately socket-less
+
+        $bodies = array_fill(0, EncryptedConnection::MAX_BATCH_MESSAGES + 1, TLEncoder::encodeObject('help.getConfig', []));
+        try {
+            $conn->callBatch($bodies);
+            $this->fail('expected RuntimeException above the container message limit');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString((string) EncryptedConnection::MAX_BATCH_MESSAGES, $e->getMessage());
+        }
+    }
+
+    public function testEmptyBatchReturnsEmptyArrayWithoutSending(): void
+    {
+        $session = new SessionData(dcId: 2, authKey: random_bytes(256));
+        $conn = new EncryptedConnection($session); // socket-less: must not even look at it
+
+        $this->assertSame([], $conn->callBatch([]));
+    }
+
+    public function testBatchThrowsAfterPoisonFrameCap(): void
+    {
+        [$clientSock, $serverSock] = $this->socketPair();
+        $authKey = random_bytes(256);
+        $session = new SessionData(dcId: 2, authKey: $authKey);
+        $conn = $this->pinnedConn(new EncryptedConnection($session, $clientSock));
+
+        $msgsAck = pack('V', TLRegistry::id('msgs_ack')) . TLSerializer::packVector([], TLSerializer::packLong(...));
+        $cap = 2 * 3 + 10;
+        for ($i = 0; $i < $cap; $i++) {
+            $this->seedFakeServerResponse($serverSock, $authKey, $msgsAck);
+        }
+
+        try {
+            $conn->callBatch([
+                'a' => TLEncoder::encodeObject('help.getNearestDc', []),
+                'b' => TLEncoder::encodeObject('help.getConfig', []),
+            ]);
+            $this->fail('expected RuntimeException after poison frame cap');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('exceeded', $e->getMessage());
+        }
+
+        $conn->close();
+        fclose($serverSock);
+    }
+
+    /**
+     * Base for pinned-message-id tests: within PacketCodec's "not too far in
+     * the future" window (id>>32 < time()+300) yet far above any real clock
+     * candidate, so nextMessageId() deterministically yields base+4, +8, ...
+     */
+    private function pinnedMessageIdBase(): int
+    {
+        return ((time() + 290) << 32) & ~3;
+    }
+
+    /**
+     * Pins lastMessageId (same reflection seam style as pinnedConn) so both
+     * the original batch and its bad_server_salt resend use predictable ids.
+     */
+    private function idPinnedConn(EncryptedConnection $conn): EncryptedConnection
+    {
+        (new \ReflectionProperty(EncryptedConnection::class, 'lastMessageId'))->setValue($conn, $this->pinnedMessageIdBase());
+        return $conn;
+    }
+
+    /**
+     * Builds a server -> client naked msg_container whose entries carry
+     * server-style msg_ids (odd — from the server's clock ≢ ours).
+     *
+     * @param list<array{0: int, 1: string}> $entries [msg_id, body] pairs
+     */
+    private static function nakedResultContainer(array $entries): string
+    {
+        $bin = pack('V', 0x73f1f8dc) . pack('V', count($entries));
+        foreach ($entries as $i => [$msgId, $body]) {
+            $bin .= pack('P', $msgId)          // msg_id
+                . pack('V', ($i + 1) * 2 - 1)  // seqno (odd — server content)
+                . pack('V', strlen($body))
+                . $body;
+        }
+        return $bin;
+    }
+
+    /**
+     * Test mirror of parseNakedContainer over a PacketCodec-decrypted payload:
+     * splits naked container tuples into decoded per-message bodies.
+     *
+     * @return list<array{msg_id: int, seqno: int, body: array<string, mixed>}>
+     */
+    private static function parseClientNakedContainer(string $payload): array
+    {
+        $messages = [];
+        $offset = 4;
+        $count = unpack('V', substr($payload, $offset, 4))[1];
+        $offset += 4;
+        for ($i = 0; $i < $count; $i++) {
+            $msgId = unpack('P', substr($payload, $offset, 8))[1];
+            $offset += 8;
+            $seqno = unpack('V', substr($payload, $offset, 4))[1];
+            $offset += 4;
+            $bodyLen = unpack('V', substr($payload, $offset, 4))[1];
+            $offset += 4;
+            $bodyOffset = 0;
+            $messages[] = [
+                'msg_id' => $msgId,
+                'seqno' => $seqno,
+                'body' => TLDecoder::decodeObject(substr($payload, $offset, $bodyLen), $bodyOffset),
+            ];
+            $offset += $bodyLen;
+        }
+        return $messages;
+    }
+
     /**
      * @return array{0: resource, 1: resource}
      */

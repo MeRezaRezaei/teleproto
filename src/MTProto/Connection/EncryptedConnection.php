@@ -22,6 +22,8 @@ use RuntimeException;
  * First call is wrapped in invokeWithLayer(layer, initConnection(..., query)); later calls
  * send the bare constructor. Handles bad_server_salt (resend once with the fresh salt),
  * gzip_packed results, rpc_error -> TelegramException, and skips transient push messages.
+ * callBatch() packs N independent prebuilt bodies into one naked msg_container
+ * (single round-trip) and demultiplexes the per-request rpc_results by inner msg_id.
  */
 class EncryptedConnection
 {
@@ -35,6 +37,22 @@ class EncryptedConnection
      * = NewSession -> 0x9ec20908) instead of being duplicated here.
      */
     private const MAX_TRANSIENT_MESSAGES = 3;
+
+    /**
+     * Docs limits for one msg_container (core.telegram.org/mtproto/service_messages):
+     * at most 1020 messages and 32 KB of container payload.
+     */
+    public const MAX_BATCH_MESSAGES = 1020;
+    public const MAX_BATCH_CONTAINER_BYTES = 32768;
+
+    /**
+     * Bodies of the in-flight callBatch, key => bytes — kept per connection
+     * (single in-flight batch, same contract as the single-call path) so a
+     * batch rpc_error can name the failing key's method for the resolver.
+     *
+     * @var array<string, string>|null
+     */
+    protected ?array $batchRequestBodies = null;
 
     /** @var resource|null */
     protected $socket;
@@ -226,6 +244,240 @@ class EncryptedConnection
     }
 
     /**
+     * Sends N independent prebuilt request bodies inside ONE naked msg_container
+     * (one encrypted packet, one round-trip) and demultiplexes the per-request
+     * rpc_results by the container's inner msg_ids. Inner ids/seqnos come from
+     * the same nextMessageId()/nextContentSeqNo() generators as single calls,
+     * so call() and callBatch() interoperate on one connection.
+     *
+     * @param array<string, string> $bodies key => prebuilt request body bytes
+     * @return array<string, array<string, mixed>> key => decoded result, input order preserved
+     * @throws TelegramException on rpc_error (with the failing key's method context)
+     * @throws RuntimeException on bounds violations, transport/protocol failures, poison streams
+     */
+    public function callBatch(array $bodies): array
+    {
+        if ($bodies === []) {
+            return [];
+        }
+        if (count($bodies) > self::MAX_BATCH_MESSAGES) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: batch of %d messages exceeds the container limit of %d',
+                count($bodies),
+                self::MAX_BATCH_MESSAGES
+            ));
+        }
+        if (!is_resource($this->socket)) {
+            throw new RuntimeException('EncryptedConnection: not connected');
+        }
+
+        $maxAttempts = 2; // original + one bad_server_salt resend
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+            $this->batchRequestBodies = $bodies;
+            $innerIds = [];
+            $container = $this->encodeBatchContainer($bodies, $innerIds);
+
+            $packet = PacketCodec::encryptPacket(
+                payload: $container,
+                authKey: $this->session->authKey,
+                sessionId: $this->sessionId,
+                serverSalt: $this->serverSalt,
+                seqNo: $this->nextContainerSeqNo(), // container = non-content-related: EVEN seq_no, counter not consumed
+                serverTimeDelta: $this->session->serverTimeDelta,
+                messageId: $this->nextMessageId() // outer id allocated last: strictly greater than every inner id
+            );
+            FrameCodec::sendAbridgedMessage($this->socket, $packet);
+            $this->touchActivity();
+
+            $results = $this->receiveBatchResults($innerIds);
+            if ($results === null) {
+                continue; // bad_server_salt: salt refreshed, whole batch resent with fresh ids
+            }
+
+            $this->batchRequestBodies = null;
+            $ordered = [];
+            foreach (array_keys($bodies) as $key) {
+                $ordered[$key] = $results[$key];
+            }
+            return $ordered;
+        }
+        throw new RuntimeException('EncryptedConnection: exhausted retries after bad_server_salt');
+    }
+
+    /**
+     * Naked msg_container encoding — the write side of parseNakedContainer():
+     * id:int32 + count:int32 + per message {msg_id:int64, seqno:int32,
+     * body_len:int32, body}. Inner msg_ids are ≡ 0 (mod 4), strictly
+     * increasing; every inner message is content (odd, increasing seq_no).
+     *
+     * @param array<string, string> $bodies
+     * @param array<int, string> $innerIds populated with inner msg_id => key
+     */
+    protected function encodeBatchContainer(array $bodies, array &$innerIds): string
+    {
+        $container = TLSerializer::packInt(0x73f1f8dc) . TLSerializer::packInt(count($bodies));
+        foreach ($bodies as $key => $body) {
+            $msgId = $this->nextMessageId();
+            $innerIds[$msgId] = $key;
+            $container .= TLSerializer::packLong($msgId)
+                . TLSerializer::packInt($this->nextContentSeqNo())
+                . TLSerializer::packInt(strlen($body))
+                . $body;
+        }
+        if (strlen($container) > self::MAX_BATCH_CONTAINER_BYTES) {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: batch container of %d bytes exceeds the %d-byte limit',
+                strlen($container),
+                self::MAX_BATCH_CONTAINER_BYTES
+            ));
+        }
+        return $container;
+    }
+
+    /**
+     * Batch receive loop: reads frames until every pending inner msg_id has
+     * its rpc_result. Unrelated pushes (msgs_ack, pong, bare
+     * new_session_created, not-ours rpc_results, updateShort*) are skipped;
+     * new_session_created refreshes the salt. Returns null to signal
+     * bad_server_salt (salt refreshed — caller resends). Poison protection:
+     * at most count(pending)*3 + 10 frames per attempt.
+     *
+     * @param array<int, string> $pending inner msg_id => key
+     * @return array<string, array<string, mixed>>|null key => decoded result
+     */
+    protected function receiveBatchResults(array $pending): ?array
+    {
+        $results = [];
+        $frameCap = count($pending) * 3 + 10;
+        for ($framesRead = 0; $pending !== []; $framesRead++) {
+            if ($framesRead >= $frameCap) {
+                throw new RuntimeException(sprintf(
+                    'EncryptedConnection: batch receive exceeded %d frames with %d result(s) still pending',
+                    $frameCap,
+                    count($pending)
+                ));
+            }
+
+            $frame = FrameCodec::receiveAbridgedMessage($this->socket);
+            $this->touchActivity();
+            $this->assertNotTransportErrorFrame($frame);
+
+            $payload = PacketCodec::decryptPacket($frame, $this->session->authKey, expectedSessionId: $this->sessionId)['payload'];
+            $id = strlen($payload) >= 4 ? unpack('V', substr($payload, 0, 4))[1] : 0;
+
+            if ($id === 0x73f1f8dc) {
+                foreach (self::parseBareContainerMessages($payload) as $body) {
+                    if ($this->absorbBatchBody($body, $pending, $results) === 'bad_server_salt') {
+                        return null;
+                    }
+                }
+                continue;
+            }
+
+            $offset = 0;
+            $decoded = TLDecoder::decodeObject($payload, $offset);
+            if ($this->absorbBatchBody($decoded, $pending, $results) === 'bad_server_salt') {
+                return null;
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Splits a received naked msg_container payload into its decoded inner
+     * bodies WITHOUT any skip/transient semantics — the batch demux loop
+     * (absorbBatchBody) makes its own per-body decisions, including salts.
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected static function parseBareContainerMessages(string $payload): array
+    {
+        $messages = [];
+        $offset = 8; // id + count
+        $count = unpack('V', substr($payload, 4, 4))[1];
+        for ($i = 0; $i < $count; $i++) {
+            $offset += 12; // msg_id + seqno
+            $bodyLen = unpack('V', substr($payload, $offset, 4))[1];
+            $offset += 4;
+            $bodyOffset = 0;
+            $messages[] = TLDecoder::decodeObject(substr($payload, $offset, $bodyLen), $bodyOffset);
+            $offset += $bodyLen;
+        }
+        return $messages;
+    }
+
+    /**
+     * Routes one decoded server body inside a batch receive. Mutates $pending
+     * (unset on routed rpc_result) and $results. Returns 'bad_server_salt' to
+     * request a whole-batch resend, null when the body was consumed or skipped.
+     *
+     * @param array<string, mixed> $body
+     * @param array<int, string> $pending msg_id => key (mutated)
+     * @param array<string, array<string, mixed>> $results key => decoded result (mutated)
+     */
+    protected function absorbBatchBody(array $body, array &$pending, array &$results): ?string
+    {
+        $name = (string)($body['_'] ?? '');
+
+        if ($name === 'bad_server_salt') {
+            $this->refreshServerSalt((int)$body['new_server_salt']);
+            return 'bad_server_salt';
+        }
+
+        if ($name === 'new_session_created') {
+            $this->refreshServerSalt((int)($body['server_salt'] ?? $this->serverSalt));
+            return null; // transient push
+        }
+
+        if ($name === 'bad_msg_notification') {
+            throw new RuntimeException(sprintf(
+                'EncryptedConnection: bad_msg_notification code %d for msg_id %s (seq %d)',
+                (int)($body['error_code'] ?? 0),
+                (string)($body['bad_msg_id'] ?? '?'),
+                (int)($body['bad_msg_seqno'] ?? -1)
+            ));
+        }
+
+        if ($name !== 'rpc_result') {
+            return null; // msgs_ack / pong / updateShort* / not-ours pushes: batch is request/response only
+        }
+
+        $reqId = (int)$body['req_msg_id'];
+        if (!isset($pending[$reqId])) {
+            return null; // result of an earlier single call, not this batch
+        }
+
+        $key = $pending[$reqId];
+        unset($pending[$reqId]);
+
+        $inner = self::unwrapResultIfGzipped((array)$body['result']);
+        if (($inner['_'] ?? '') === 'rpc_error') {
+            $method = TLRegistry::nameOf(unpack('V', substr((string)$this->batchRequestBodies[$key], 0, 4))[1] ?? 0);
+            throw RpcExceptionResolver::resolve(
+                (string)($inner['error_message'] ?? 'UNKNOWN'),
+                (int)($inner['error_code'] ?? 0),
+                $method
+            );
+        }
+        $results[$key] = $inner;
+        return null;
+    }
+
+    /**
+     * A 4-byte frame decoding to a negative int32 is a transport-level
+     * error code (e.g. -404: auth key unknown) — surface it typed.
+     */
+    protected function assertNotTransportErrorFrame(string $frame): void
+    {
+        if (strlen($frame) === 4) {
+            $int32 = unpack('l', $frame)[1];
+            if ($int32 < 0) {
+                throw RpcExceptionResolver::fromTransportCode($int32);
+            }
+        }
+    }
+
+    /**
      * Transient push-message constructor ids (msgs_ack / new_session_created),
      * sourced from TLRegistry so the ids exist in exactly one place.
      *
@@ -248,15 +500,8 @@ class EncryptedConnection
         for ($transients = 0; $transients <= self::MAX_TRANSIENT_MESSAGES; $transients++) {
             $frame = FrameCodec::receiveAbridgedMessage($this->socket);
             $this->touchActivity();
+            $this->assertNotTransportErrorFrame($frame);
 
-            // A 4-byte frame decoding to a negative int32 is a transport-level
-            // error code (e.g. -404: auth key unknown) — surface it typed.
-            if (strlen($frame) === 4) {
-                $int32 = unpack('l', $frame)[1];
-                if ($int32 < 0) {
-                    throw RpcExceptionResolver::fromTransportCode($int32);
-                }
-            }
             $msg = PacketCodec::decryptPacket($frame, $this->session->authKey, expectedSessionId: $this->sessionId);
             $payload = $msg["payload"];
 
@@ -361,6 +606,20 @@ class EncryptedConnection
     }
 
     /**
+     * seq_no for the outgoing msg_container envelope. A container is a
+     * NON-content-related message (never acknowledged on its own), so its
+     * seq_no must be EVEN: counter*2 with the content counter NOT consumed
+     * (docs: core.telegram.org/mtproto/description, error_code 34 otherwise).
+     * Because the container is generated after its contents, this is always
+     * one above the highest inner seq_no — "greater than or equal to the
+     * sequence numbers of the messages contained in it" holds.
+     */
+    protected function nextContainerSeqNo(): int
+    {
+        return $this->contentCounter + 1; // contentCounter is always odd (−1 + 2n), so +1 is even
+    }
+
+    /**
      * seq_no for outgoing client content messages: odd and strictly
      * increasing (2n+1). A content message with an even seq_no is rejected
      * by the server with bad_msg_notification code 35.
@@ -368,6 +627,17 @@ class EncryptedConnection
     protected function nextContentSeqNo(): int
     {
         return $this->contentCounter += 2;
+    }
+
+    /**
+     * Whether invokeWithLayer/initConnection has already been sent on this
+     * connection. callBatch() never sends the wrap itself, so its callers
+     * (Client::callMany) route the first request through call() to establish
+     * the layer before batching the rest.
+     */
+    public function isInited(): bool
+    {
+        return $this->inited;
     }
 
     public function lastSessionData(): SessionData

@@ -53,6 +53,18 @@ class TeleprotoClient
     }
 
     /**
+     * Batch passthrough: N independent MTProto methods in ONE round-trip on
+     * the default user scope's connection (ergonomic use with the .env session).
+     *
+     * @param array<string, array{method: string, params: array<string, mixed>}> $requests
+     * @return array<string, array<string, mixed>> key => decoded result, input order preserved
+     */
+    public function callMany(array $requests): array
+    {
+        return $this->user()->mtproto->callMany($requests);
+    }
+
+    /**
      * Create or bind an MTProto user account session.
      * If no session is provided, falls back to the configured default user session from .env.
      *

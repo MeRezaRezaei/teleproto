@@ -10,6 +10,7 @@ use MeRezaRezaei\Teleproto\MTProto\Connection\PlainConnection;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\AesIge;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\AuthKeyFactory;
 use MeRezaRezaei\Teleproto\MTProto\Crypto\PasswordCalculator;
+use MeRezaRezaei\Teleproto\MTProto\TL\TLEncoder;
 use MeRezaRezaei\Teleproto\MTProto\TL\TLSerializer;
 use MeRezaRezaei\Teleproto\MTProto\Transport\FrameCodec;
 use MeRezaRezaei\Teleproto\MTProto\Transport\StreamSocket;
@@ -154,6 +155,80 @@ class Client
                 $conn->ping(); // lazy keepalive: keep the socket past the ~60s server idle kill
             }
             return $conn->call($method, $params);
+        } catch (TelegramException $e) {
+            throw $e; // RPC-level error: the connection stays usable
+        } catch (RuntimeException $e) {
+            // Transport/protocol failure: the cached connection is dead — evict, rethrow.
+            $this->close();
+            throw $e;
+        }
+    }
+
+    /**
+     * Executes N independent MTProto RPC methods in ONE round-trip via
+     * EncryptedConnection::callBatch() (single msg_container). Offline mode
+     * returns call()'s stub shape per key, keys and order preserved.
+     *
+     * Lazy handshake/first-call semantics match call(): a fresh connection
+     * routes its FIRST request through call() — which wraps it in
+     * invokeWithLayer + initConnection — and batches only the remainder;
+     * steady-state connections send every request in one container.
+     *
+     * @param array<string, array{method: string, params: array<string, mixed>}> $requests
+     * @return array<string, array<string, mixed>> key => decoded result, input order preserved
+     * @throws \InvalidArgumentException when a method name is unknown to TLRegistry
+     * @throws TelegramException on rpc_error
+     * @throws RuntimeException on transport/protocol failures (connection evicted)
+     */
+    public function callMany(array $requests): array
+    {
+        if ($requests === []) {
+            return [];
+        }
+
+        if (!$this->isLive()) {
+            if ($this->session === null || empty($this->session->authKey)) {
+                throw new RuntimeException("Session AuthKey is required to make authenticated MTProto calls.");
+            }
+
+            // Mock result for unit test & execution pipeline (same shape as call())
+            $stub = [];
+            foreach ($requests as $key => $request) {
+                $stub[$key] = [
+                    '_' => 'rpc_result',
+                    'method' => $request['method'],
+                    'params' => $request['params'],
+                    'dc_id' => $this->session->dcId,
+                ];
+            }
+            return $stub;
+        }
+
+        try {
+            $conn = $this->ensureConnection();
+            if ($conn->idleSeconds() > self::KEEPALIVE_IDLE_SECONDS) {
+                $conn->ping(); // lazy keepalive before the batched round-trip
+            }
+
+            // Bodies are built for EVERY request up front: TLRegistry validates
+            // each method name (unknown -> InvalidArgumentException naming it)
+            // before any bytes hit the wire.
+            $bodies = [];
+            foreach ($requests as $key => $request) {
+                $bodies[$key] = TLEncoder::encodeObject($request['method'], $request['params']);
+            }
+
+            if (!$conn->isInited()) {
+                // First-call semantics as today: the leading request establishes
+                // the layer via call()'s invokeWithLayer wrap; the rest ride one
+                // container. A single-request callMany degenerates to call().
+                $firstKey = array_key_first($bodies);
+                $results = [$firstKey => $conn->call($requests[$firstKey]['method'], $requests[$firstKey]['params'])];
+                unset($bodies[$firstKey]);
+                return $results + $conn->callBatch($bodies);
+            }
+
+            return $conn->callBatch($bodies);
         } catch (TelegramException $e) {
             throw $e; // RPC-level error: the connection stays usable
         } catch (RuntimeException $e) {

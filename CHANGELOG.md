@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`msg_container` batching — N independent RPCs in ONE round-trip.** `EncryptedConnection::callBatch()` packs up to 1020 prebuilt request bodies (32 KB container limit) into a single naked `msg_container` — one encrypted packet, one TCP write — and demultiplexes the per-request `rpc_result`s by inner msg_id: gzip-aware result unwrap, typed `rpc_error` resolution carrying the failing request's method context, one whole-batch resend after `bad_server_salt`, poison-frame cap. The container envelope uses the protocol-correct even (non-content-related) seq_no — live DC4 rejects an odd one with `bad_msg_notification` code 34. `Client::callMany()` validates and builds every body up front and returns key => result with input order preserved (fresh connections still pay the `invokeWithLayer` init once; warm connections send all N in one container); `TeleprotoClient::callMany()` passes it through on the default user scope. Live-measured on production DC4: 3 requests in one 21–33 ms container vs 58–81 ms sequential (**2.3–2.7×**, `php examples/batch-bench.php`).
+
 ## [v1.0.0] - 2026-08-28
 
 ### ⚡ Highlights & Overview
