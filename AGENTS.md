@@ -6,7 +6,7 @@ Guidance for coding agents editing this repository. Facts below describe `src/` 
 
 | Layer | Location | What it is |
 | --- | --- | --- |
-| MTProto wire layer | `src/MTProto/` | Raw binary engine: `Client`, `Connection/EncryptedConnection` (handshake, single in-flight blocking query, `invokeWithLayer` wrap), `Crypto/` (DH key exchange, 2FA SRP), `TL/` (registry + serializer/encoder/decoder, zero-regex), `Transport/`, `SessionData`. |
+| MTProto wire layer | `src/MTProto/` | Raw binary engine: `Client`, `Connection/EncryptedConnection` (handshake, blocking `call()` + `callBatch()` msg_container batching with receive demux by inner msg_id, `invokeWithLayer` wrap), `Crypto/` (DH key exchange, 2FA SRP), `TL/` (registry + serializer/encoder/decoder, zero-regex), `Transport/`, `SessionData`. |
 | Schema + Methods (generated layer) | `src/Schema/`, `src/Methods/` | `MethodRegistry` loads the packaged artifacts `schema/methods-mtproto.json` + `schema/methods-botapi.json` into `TelegramMethod` entries; `SchemaDiffer` audits them. `Methods.php` exposes fluent builder groups backed by `src/Methods/Generated/*`. |
 | Services | `src/Services/` | `TeleprotoClient` (entry point: `user`/`fromSession`/`bot`/`botMtproto`/`dispatch`), `UserAccountScope` + `BotAccountScope` + `BotClient` (per-transport call scopes), `TeleprotoAuthService` (phone/QR/bot login), `UpdatePollerService` + `EventDispatcherSink` (update ingestion, `updates.getDifference` state machine). |
 | Exceptions | `src/Exceptions/` | `TelegramException` base, `DcMigrationException`, and `Rpc/`: typed per-error classes (`FloodWaitException`, `AuthKeyException`, ...), `RpcErrorCatalog` (generated official error DB), `RpcExceptionResolver` (error string -> typed exception + doc hint). |

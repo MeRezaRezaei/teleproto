@@ -6,7 +6,7 @@ How to run Teleproto across many accounts and bots today, and what the roadmap c
 
 ## 📦 Today (v1.0): One Process per Account
 
-Teleproto's MTProto connection is a **blocking, single in-flight socket** (`EncryptedConnection` sends one query and reads until its `rpc_result` returns). There is no shared event loop and no in-process multiplexing — by design, this is what keeps the engine small and stateless.
+Teleproto's MTProto connection is a **blocking request/response socket**: a sequential `call()` sends one query and reads until its `rpc_result` returns, while `callMany()` batches N independent queries into a single `msg_container` round-trip (`EncryptedConnection::callBatch` + receive demux by inner msg_id). There is no shared event loop and no in-process multiplexing *across* batches — one batch in flight at a time — by design, this is what keeps the engine small and stateless.
 
 The supported scaling model is **horizontal: one process per account/bot**, driven by Laravel queue workers or Horizon.
 
@@ -84,7 +84,7 @@ What that means per Laravel runtime:
 
 - **PHP-FPM** — every request is a cold process. ~49 ms of setup is perfectly fine for *occasional* Telegram work (a notification, a Passport callback). Don't push a per-request hot path through MTProto at volume; that's what workers are for.
 - **Queue workers / Horizon** — each worker boots once per account and stays warm: every subsequent call is the ~5 ms path. The layout above already gives you this for free.
-- **Octane** — boot once, stay warm over HTTP: build the client in a container binding during boot and reuse it across requests (workers handle one request at a time, matching the single in-flight socket).
+- **Octane** — boot once, stay warm over HTTP: build the client in a container binding during boot and reuse it across requests (workers handle one request at a time, matching the blocking connection). Batch a request's independent calls with `callMany()` — N-in-1-RTT on the warm socket.
 
 ```text
 once, ever                every process                   per call

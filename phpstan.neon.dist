@@ -17,3 +17,14 @@ parameters:
             allowIn:
                 - bin/*
                 - examples/*
+        # Subprocess spawning is bin-only by policy. Exemption: SchemaAuditCommand
+        # is a dev-only artisan command that invokes the bin/ generators
+        # (php bin/generate-*.php) to audit the committed artifacts — the
+        # generators themselves stay in bin/; this command only orchestrates.
+        -
+            function: 'proc_open()'
+            message: 'subprocess spawning is bin-only by policy — move it into a bin/ generator; src/ orchestrates, not spawns'
+            allowIn:
+                - bin/*
+                - examples/*
+                - src/Console/SchemaAuditCommand.php

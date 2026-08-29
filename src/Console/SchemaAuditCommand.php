@@ -117,6 +117,10 @@ class SchemaAuditCommand extends Command
     }
 
     /**
+     * Dev-only subprocess orchestration: spawns the bin/ generators
+     * (php bin/generate-*.php). Exempted from the bin-only proc_open
+     * policy in phpstan.neon.dist — see the comment there.
+     *
      * @param list<string> $command
      * @return array{exit: int, output: string}
      */
